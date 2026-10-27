@@ -328,6 +328,7 @@ public partial class MergeGame
             case "already_linked": return "Этот игрок уже привязан к другой почте";
             case "bad_login": return "Неверная почта или пароль";
             case "too_many_requests": return "Слишком много попыток. Подождите 15 минут";
+            case "not_found": return "На сервере старая версия — обновите сервер (deploy_to_vps.bat)";
             default: return "Ошибка сервера (" + code + ")";
         }
     }
