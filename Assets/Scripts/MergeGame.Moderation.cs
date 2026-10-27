@@ -1,0 +1,139 @@
+// Действия администратора, пришедшие с сервера:
+// • изменения ресурсов (монеты, кристаллы, энергия) — сервер присылает их в ответе на статус,
+//   игра применяет, запоминает номера применённых (чтобы не применить дважды) и подтверждает серверу;
+// • блокировка — игра показывает экран «Игрок заблокирован» поверх всего и не даёт играть,
+//   пока администратор не снимет блокировку.
+
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+[Serializable] class NetGrant { public long id; public int coins, gems, energy; }
+[Serializable] class NetStatusResp { public bool ok; public string error, reason; public NetGrant[] grants; }
+[Serializable] class NetAckReq { public string id, token; public long[] ids; }
+
+public partial class MergeGame
+{
+    const int MaxGrantedEnergy = 99;
+
+    bool banned;
+    string banReason = "";
+    RectTransform banOverlay;
+    Text banReasonTxt, banIdTxt;
+
+    void InitModeration()
+    {
+        banned = PlayerPrefs.GetInt("net_banned", 0) == 1;
+        banReason = PlayerPrefs.GetString("net_ban_reason", "");
+        ApplyBanUi();
+    }
+
+    // ---------- изменения ресурсов ----------
+    IEnumerator ApplyGrants(NetGrant[] grants)
+    {
+        var done = LoadAppliedGrants();
+        var ids = new List<long>();
+        int coins = 0, gemsAdd = 0, energyAdd = 0;
+        foreach (var g in grants)
+        {
+            if (g == null) continue;
+            ids.Add(g.id);
+            if (done.Contains(g.id)) continue;      // уже применено, но сервер не получил подтверждение
+            done.Add(g.id);
+            coins += g.coins; gemsAdd += g.gems; energyAdd += g.energy;
+        }
+
+        if (coins != 0 || gemsAdd != 0 || energyAdd != 0)
+        {
+            score = Mathf.Max(0, score + coins);
+            gems = Mathf.Max(0, gems + gemsAdd);
+            energy = Mathf.Clamp(energy + energyAdd, 0, MaxGrantedEnergy);
+            SaveAppliedGrants(done);
+            Save();
+            PlayerPrefs.Save();
+            RefreshTop();
+            if (tab == TabStart) RefreshStartMenu();
+            Toast(GrantText(coins, gemsAdd, energyAdd));
+            GameAudio.Buy();
+        }
+        else SaveAppliedGrants(done);
+
+        if (ids.Count == 0) yield break;
+        var ack = new NetAckReq { id = netId, token = netToken, ids = ids.ToArray() };
+        yield return Http("POST", netUrl, "/api/grants/ack", JsonUtility.ToJson(ack), (c, t) => { });
+    }
+
+    static string GrantText(int coins, int gemsAdd, int energyAdd)
+    {
+        var parts = new List<string>();
+        void Part(int v, string unit) { if (v != 0) parts.Add((v > 0 ? "+" : "−") + Mathf.Abs(v) + " " + unit); }
+        Part(coins, "монет");
+        Part(gemsAdd, "крист.");
+        Part(energyAdd, "энергии");
+        bool gift = coins >= 0 && gemsAdd >= 0 && energyAdd >= 0;
+        return (gift ? "Подарок: " : "Изменение: ") + string.Join(", ", parts);
+    }
+
+    static HashSet<long> LoadAppliedGrants()
+    {
+        var set = new HashSet<long>();
+        foreach (var s in PlayerPrefs.GetString("grants_done", "").Split(','))
+            if (long.TryParse(s, out long id)) set.Add(id);
+        return set;
+    }
+
+    static void SaveAppliedGrants(HashSet<long> set)
+    {
+        var list = new List<long>(set);
+        list.Sort();
+        if (list.Count > 200) list.RemoveRange(0, list.Count - 200);   // хватит последних 200 номеров
+        PlayerPrefs.SetString("grants_done", string.Join(",", list));
+    }
+
+    // ---------- блокировка ----------
+    void SetBanned(bool on, string reason)
+    {
+        reason = reason ?? "";
+        if (banned == on && banReason == reason) return;
+        banned = on;
+        banReason = on ? reason : "";
+        PlayerPrefs.SetInt("net_banned", on ? 1 : 0);
+        PlayerPrefs.SetString("net_ban_reason", banReason);
+        PlayerPrefs.Save();
+        if (on) { CancelDrag(); ClearHint(); Blur(); }
+        else SetTab(TabStart);
+        ApplyBanUi();
+    }
+
+    void BuildBanScreen()
+    {
+        banOverlay = NewRt("Banned", canvasRt);
+        banOverlay.anchorMin = Vector2.zero;
+        banOverlay.anchorMax = Vector2.one;
+        banOverlay.offsetMin = banOverlay.offsetMax = Vector2.zero;
+        AddImg(banOverlay, null, C(255, 243, 224));
+
+        var box = CC(banOverlay, 0, 20, 350, 330, "Box");
+        Round(box, Color.white, 28);
+        var mark = TL(box, 145, 26, 60, 60, "Mark");
+        AddImg(mark, circleSpr, Red);
+        Label(mark, "!", 34, Color.white, TextAnchor.MiddleCenter, 0, 0, 60, 60);
+        Label(box, "Игрок заблокирован", 24, Ink, TextAnchor.MiddleCenter, 0, 100, 350, 36);
+        banReasonTxt = WrapLabel(box, "", 15, Ink, TextAnchor.UpperCenter, 24, 146, 302, 70);
+        banIdTxt = Label(box, "", 14, Muted, TextAnchor.MiddleCenter, 0, 222, 350, 24);
+        WrapLabel(box, "Если это ошибка — напишите администратору игры и назовите свой ID.",
+            13, Muted, TextAnchor.UpperCenter, 24, 256, 302, 50);
+        ApplyBanUi();
+    }
+
+    void ApplyBanUi()
+    {
+        if (banOverlay == null) return;
+        banOverlay.gameObject.SetActive(banned);
+        if (!banned) return;
+        banReasonTxt.text = string.IsNullOrEmpty(banReason) ? "Причина не указана" : "Причина: " + banReason;
+        banIdTxt.text = string.IsNullOrEmpty(netId) ? "" : "Ваш ID: " + netId;
+    }
+}

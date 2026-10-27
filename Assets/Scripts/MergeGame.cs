@@ -78,7 +78,7 @@ public partial class MergeGame : MonoBehaviour
         score = PlayerPrefs.GetInt("eg_score", 0);
         gems = PlayerPrefs.GetInt("eg_gems", 0);
         zooCount = Mathf.Clamp(PlayerPrefs.GetInt("eg_zoo", 0), 0, Zoo.Length);
-        energy = Mathf.Clamp(PlayerPrefs.GetInt("eg_energy", MaxEnergy), 0, MaxEnergy);
+        energy = Mathf.Clamp(PlayerPrefs.GetInt("eg_energy", MaxEnergy), 0, MaxGrantedEnergy);
         bool mOn = PlayerPrefs.GetInt("eg_music", 1) == 1;
         bool sOn = PlayerPrefs.GetInt("eg_sfx", 1) == 1;
         SetupCamera();
@@ -230,6 +230,8 @@ public partial class MergeGame : MonoBehaviour
         float extra = Mathf.Max(0f, avail - 700f * sc) * 0.25f;
         content.localScale = Vector3.one * sc;
         content.anchoredPosition = new Vector2(0, -(topInset + extra));
+
+        if (banned) return;            // заблокированный игрок видит только экран блокировки
 
         if (resetArm > 0f)
         {

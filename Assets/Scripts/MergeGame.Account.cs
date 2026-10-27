@@ -32,7 +32,7 @@ class GameSave
 class NetAccountResp
 {
     public bool ok;
-    public string error, email, id, token, save;
+    public string error, email, id, token, save, reason;
     public long saveVer;
     public int nickA, nickB;
 }
@@ -110,7 +110,7 @@ public partial class MergeGame
         score = Mathf.Max(0, s.score);
         gems = Mathf.Max(0, s.gems);
         zooCount = Mathf.Clamp(s.zoo, 0, Zoo.Length);
-        energy = Mathf.Clamp(s.energy, 0, MaxEnergy);
+        energy = Mathf.Clamp(s.energy, 0, MaxGrantedEnergy);
         GameAudio.SetMusic(s.music);
         GameAudio.SetSfx(s.sfx);
 
@@ -328,6 +328,7 @@ public partial class MergeGame
             case "already_linked": return "Этот игрок уже привязан к другой почте";
             case "bad_login": return "Неверная почта или пароль";
             case "too_many_requests": return "Слишком много попыток. Подождите 15 минут";
+            case "banned": return "Этот аккаунт заблокирован" + (string.IsNullOrEmpty(r.reason) ? "" : ": " + r.reason);
             case "not_found": return "На сервере старая версия — обновите сервер (deploy_to_vps.bat)";
             default: return "Ошибка сервера (" + code + ")";
         }

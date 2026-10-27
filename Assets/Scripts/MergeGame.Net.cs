@@ -68,6 +68,7 @@ public partial class MergeGame
         }
         netUrl = PlayerPrefs.GetString("net_url", "");
         InitAccount();
+        InitModeration();
         netStarted = true;
         RefreshNetUi();
         StartCoroutine(NetLoop());
@@ -238,9 +239,23 @@ public partial class MergeGame
     IEnumerator SendStatus(bool online)
     {
         long result = -1;
-        yield return Http("POST", netUrl, "/api/status", JsonUtility.ToJson(MyStatus(online)), (code, text) => result = code);
+        string body = null;
+        yield return Http("POST", netUrl, "/api/status", JsonUtility.ToJson(MyStatus(online)), (code, text) => { result = code; body = text; });
+        var resp = Parse<NetStatusResp>(body);
 
-        if (result == 200) { SetNetState(NetState.Online); yield break; }
+        if (result == 200)
+        {
+            SetNetState(NetState.Online);
+            if (banned) SetBanned(false, "");                       // блокировку сняли
+            if (resp != null && resp.grants != null && resp.grants.Length > 0) yield return ApplyGrants(resp.grants);
+            yield break;
+        }
+        if (result == 403 && resp != null && resp.error == "banned")
+        {
+            SetNetState(NetState.Online);
+            SetBanned(true, resp.reason);
+            yield break;
+        }
         if (result == 403 || result == 404)
         {
             // сервер нас не знает (например, база была удалена) — зарегистрируемся заново

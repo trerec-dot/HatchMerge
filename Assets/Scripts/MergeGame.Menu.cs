@@ -92,6 +92,7 @@ public partial class MergeGame
         BuildAccount();
 
         menuFx = TL(content, 0, 0, 390, 700, "MenuFX");
+        BuildBanScreen();              // поверх всего, включая нижнюю панель
     }
 
     void MakeSwitch(RectTransform parent, string title, float y, out Image track, out RectTransform knob, System.Action toggle)
