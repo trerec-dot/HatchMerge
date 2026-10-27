@@ -58,6 +58,13 @@ install -d -m 750 /var/backups/hatchmerge
 install -m 644 "$SRC" /opt/hatchmerge/hatchmerge_server.py
 install -m 755 "$HERE/backup.sh" /opt/hatchmerge/backup.sh
 
+echo "==> Пароль страницы администратора (/admin)"
+if ! grep -q '^HATCHMERGE_ADMIN_PASSWORD=.' /etc/hatchmerge.env 2>/dev/null; then
+  echo "HATCHMERGE_ADMIN_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_urlsafe(12))')" > /etc/hatchmerge.env
+fi
+chmod 600 /etc/hatchmerge.env
+ADMIN_PW="$(grep '^HATCHMERGE_ADMIN_PASSWORD=' /etc/hatchmerge.env | head -n 1 | cut -d= -f2-)"
+
 cat > /etc/systemd/system/hatchmerge.service <<UNIT
 [Unit]
 Description=HatchMerge player server
@@ -74,6 +81,7 @@ Environment=HATCHMERGE_PROXY=1
 Environment=HATCHMERGE_DISCOVERY=0
 Environment=HATCHMERGE_LIST=0
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/etc/hatchmerge.env
 ExecStart=/usr/bin/python3 /opt/hatchmerge/hatchmerge_server.py
 Restart=always
 RestartSec=3
@@ -172,6 +180,10 @@ echo
 echo "   https://$DOMAIN"
 echo
 echo " Впишите эту строку в Assets/Resources/server_url.txt и пересоберите игру."
+echo
+echo " Страница администратора: https://$DOMAIN/admin"
+echo " Пароль администратора:   $ADMIN_PW"
+echo " (хранится в /etc/hatchmerge.env — там же его можно заменить, затем: systemctl restart hatchmerge)"
 echo " Журнал сервера:   journalctl -u hatchmerge -f"
 echo " Резервные копии:  /var/backups/hatchmerge (каждый день в 03:30)"
 echo "========================================================"

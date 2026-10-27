@@ -25,6 +25,7 @@ API (JSON):
 import hashlib
 import hmac
 import html
+from urllib.parse import parse_qs
 import json
 import os
 import re
@@ -44,11 +45,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 #   HATCHMERGE_PROXY=1      сервер стоит за Caddy: адрес игрока берётся из X-Forwarded-For
 #   HATCHMERGE_DISCOVERY=0  выключить автопоиск в локальной сети (на VPS он не нужен)
 #   HATCHMERGE_LIST=0       не показывать список игроков на главной странице (для интернета)
+#   HATCHMERGE_ADMIN_PASSWORD  пароль страницы администратора /admin
+#                           (на VPS задаётся в /etc/hatchmerge.env; без пароля /admin открыт только
+#                           при запуске на своём ПК, а за Caddy — выключен)
 HTTP_HOST = os.environ.get("HATCHMERGE_HOST", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HATCHMERGE_PORT", "8080"))
 BEHIND_PROXY = os.environ.get("HATCHMERGE_PROXY", "0") == "1"
 DISCOVERY = os.environ.get("HATCHMERGE_DISCOVERY", "1") == "1"
 PUBLIC_LIST = os.environ.get("HATCHMERGE_LIST", "1") == "1"
+ADMIN_PASSWORD = os.environ.get("HATCHMERGE_ADMIN_PASSWORD", "")
+ADMIN_SESSION_HOURS = 12
 DISCOVERY_PORT = 47777
 ONLINE_WINDOW = 70          # секунд без сообщений, после которых игрок считается «не в сети»
 NICK_A_COUNT = NICK_B_COUNT = 16
@@ -163,6 +169,66 @@ def valid_save(value):
         return None
 
 
+ZOO_NAMES = ["Облачко-пушистик", "Дракончик-тапок", "Медузка-шарик", "Лисёнок-носок",
+             "Котик-клубочек", "Совёнок-пончик", "Зайка-варежка", "Единорожек-пирожок"]
+EGG_COLORS = ["", "#f6d6a8", "#9ed8c6", "#8ec5f2", "#f5a7c8", "#c7a6f2", "#ffc978", "#ff8c78"]
+
+
+def fmt_time(ts):
+    return time.strftime("%d.%m.%Y %H:%M", time.localtime(ts)) if ts else "—"
+
+
+def ago(sec):
+    if sec < 60:
+        return "только что"
+    if sec < 3600:
+        return f"{sec // 60} мин назад"
+    if sec < 86400:
+        return f"{sec // 3600} ч назад"
+    return f"{sec // 86400} дн назад"
+
+
+ADMIN_CSS = """
+:root{--bg:#fff3e0;--ink:#3b2a4a;--muted:#8a7a96;--card:#fff;--line:#f0e6f6;--accent:#c93c20;--on:#3c9a6e}
+@media (prefers-color-scheme:dark){:root{--bg:#1e1724;--ink:#f1e8f7;--muted:#a597b0;--card:#2a2132;--line:#3a2f44}}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--card);border-bottom:1px solid var(--line)}
+header h1{font-size:18px;margin:0}main{padding:20px;max-width:1300px;margin:auto}
+a{color:var(--accent)}.muted{color:var(--muted)}.err{color:var(--accent)}
+.card{background:var(--card);border-radius:16px;padding:16px 18px;box-shadow:0 1px 3px #0001}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+.stats b{display:block;font-size:28px}
+.search{display:flex;gap:8px;align-items:center;margin:0 0 12px}
+input{font:inherit;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);min-width:260px}
+button{font:inherit;padding:10px 16px;border:0;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer}
+.wrap{overflow-x:auto;background:var(--card);border-radius:16px}
+table{border-collapse:collapse;width:100%}th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:12px;color:var(--muted);font-weight:600}td.n{text-align:right;font-variant-numeric:tabular-nums}
+.wrap tr:hover td{background:var(--line);cursor:pointer}
+.on{color:var(--on)}.off{color:var(--muted)}
+.login{max-width:360px;margin:60px auto;display:flex;flex-direction:column;gap:12px}.login input{min-width:0}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.kv th{width:45%}.kv td{white-space:normal}
+.grid{display:grid;grid-template-columns:repeat(5,34px);gap:4px}
+.cell{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;color:#3b2a4a}
+.zoo{list-style:none;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.zoo li{padding:6px 10px;border-radius:10px;background:var(--line)}.zoo li.lock{opacity:.45}
+.zoo li.got::before{content:"✓ ";color:var(--on)}
+@media (max-width:600px){main{padding:12px}input{min-width:0;flex:1}}
+"""
+
+
+def admin_shell(title, body, refresh=0):
+    meta = f'<meta http-equiv="refresh" content="{refresh}">' if refresh else ""
+    logout = ('<form method=post action="/admin/logout" style="margin:0"><button>Выйти</button></form>'
+              if ADMIN_PASSWORD else "")
+    return f"""<!doctype html><html lang=ru><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">{meta}
+<meta name=robots content="noindex,nofollow"><title>{html.escape(title)} · HatchMerge</title>
+<style>{ADMIN_CSS}</style><header><h1>Яйца-сюрпризы · администратор</h1>{logout}</header>
+<main>{body}</main></html>"""
+
+
 def nick(row):
     return f"{NICK_A[row['nick_a'] % len(NICK_A)]} {NICK_B[row['nick_b'] % len(NICK_B)]}"
 
@@ -188,6 +254,8 @@ class RateLimiter:
 
 
 register_limit = RateLimiter(20, 3600)    # регистраций с одного адреса в час
+admin_login_limit = RateLimiter(8, 900)   # попыток входа администратора за 15 минут
+admin_sessions = {}                        # cookie -> время окончания
 login_ip_limit = RateLimiter(20, 600)     # попыток входа с одного адреса за 10 минут
 login_email_limit = RateLimiter(10, 900)  # попыток входа в одну учётную запись за 15 минут
 account_limit = RateLimiter(10, 3600)     # привязок почты с одного адреса в час
@@ -259,11 +327,20 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "":
             return self.send_page()
+        if path == "/admin":
+            return self.admin_list() if self.admin_ok() else self.admin_login_page()
+        m = re.fullmatch(r"/admin/player/(\d{6})", path)
+        if m:
+            return self.admin_player(m.group(1)) if self.admin_ok() else self.redirect("/admin")
         self.send_json(404, {"ok": False, "error": "not_found"})
 
     # ---- POST
     def do_POST(self):
         path = self.path.split("?", 1)[0].rstrip("/")
+        if path == "/admin/login":
+            return self.admin_login()
+        if path == "/admin/logout":
+            return self.admin_logout()
         body = self.read_json()
         if body is None:
             return self.send_json(400, {"ok": False, "error": "bad_json"})
@@ -408,13 +485,173 @@ class Handler(BaseHTTPRequestHandler):
 table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-bottom:1px solid #eee;text-align:left}}</style>
 <h2>Сервер «Яйца-сюрпризы» работает</h2>
 <p>Игроков: {total} · сейчас в сети: {online}</p>
-{table}"""
+{table}
+<p><a href="/admin">Вход для администратора</a></p>"""
         data = page.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    # ================================================================ страница администратора
+    def send_html(self, code, page, headers=()):
+        data = page.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        for k, v in headers:
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(data)
+
+    def redirect(self, where, headers=()):
+        self.send_response(303)
+        self.send_header("Location", where)
+        self.send_header("Content-Length", "0")
+        for k, v in headers:
+            self.send_header(k, v)
+        self.end_headers()
+
+    def session_cookie(self):
+        for part in self.headers.get("Cookie", "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "hm_admin":
+                return v
+        return ""
+
+    def admin_ok(self):
+        if not ADMIN_PASSWORD:
+            return not BEHIND_PROXY           # без пароля — только на своём ПК
+        exp = admin_sessions.get(self.session_cookie())
+        return exp is not None and exp > time.time()
+
+    def admin_login_page(self, error=""):
+        if not ADMIN_PASSWORD and BEHIND_PROXY:
+            msg = "Страница администратора выключена: на сервере не задан пароль (HATCHMERGE_ADMIN_PASSWORD)."
+            return self.send_html(403, admin_shell("Администратор", f"<p class=card>{msg}</p>"))
+        err = f"<p class=err>{html.escape(error)}</p>" if error else ""
+        body = f"""<form class="card login" method="post" action="/admin/login">
+<h2>Вход для администратора</h2>{err}
+<input type="password" name="password" placeholder="Пароль" autofocus required>
+<button>Войти</button></form>"""
+        return self.send_html(200, admin_shell("Вход", body))
+
+    def admin_login(self):
+        length = clamp_int(self.headers.get("Content-Length"), 0, 4096, 0)
+        form = parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+        password = (form.get("password") or [""])[0]
+        if not ADMIN_PASSWORD:
+            return self.redirect("/admin")
+        if not admin_login_limit.allow(self.client_ip()):
+            return self.admin_login_page("Слишком много попыток. Подождите 15 минут.")
+        if not secrets.compare_digest(password.encode("utf-8"), ADMIN_PASSWORD.encode("utf-8")):
+            time.sleep(1)
+            return self.admin_login_page("Неверный пароль")
+        sid = secrets.token_urlsafe(32)
+        now = time.time()
+        for k in [k for k, v in admin_sessions.items() if v < now]:
+            admin_sessions.pop(k, None)
+        admin_sessions[sid] = now + ADMIN_SESSION_HOURS * 3600
+        secure = "; Secure" if BEHIND_PROXY else ""
+        cookie = f"hm_admin={sid}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ADMIN_SESSION_HOURS * 3600}{secure}"
+        print(f"{time.strftime('%H:%M:%S')}  вход администратора с {self.client_ip()}")
+        return self.redirect("/admin", [("Set-Cookie", cookie)])
+
+    def admin_logout(self):
+        admin_sessions.pop(self.session_cookie(), None)
+        return self.redirect("/admin", [("Set-Cookie", "hm_admin=; Path=/; Max-Age=0")])
+
+    def admin_list(self):
+        now = time.time()
+        q = parse_qs(self.path.partition("?")[2]).get("q", [""])[0].strip().lower()[:100]
+        with _db_lock:
+            rows = _db.execute("""SELECT p.*, a.email FROM players p LEFT JOIN accounts a ON a.player_id = p.id
+                                  ORDER BY p.last_seen DESC""").fetchall()
+        total, accounts = len(rows), sum(1 for r in rows if r["email"])
+        online = sum(1 for r in rows if player_json(r, now)["online"])
+        today = sum(1 for r in rows if now - r["created"] < 86400)
+        if q:
+            rows = [r for r in rows if q in r["id"] or q in (r["email"] or "") or q in nick(r).lower()]
+
+        lines = []
+        for r in rows[:500]:
+            p = player_json(r, now)
+            status = "<span class=on>● в сети</span>" if p["online"] else f"<span class=off>● {ago(p['lastSeenSec'])}</span>"
+            email = html.escape(r["email"]) if r["email"] else "<span class=muted>гость</span>"
+            lines.append(
+                f"<tr onclick=\"location='/admin/player/{r['id']}'\"><td><b>{r['id']}</b></td>"
+                f"<td>{html.escape(nick(r))}</td><td>{email}</td><td>{status}</td>"
+                f"<td class=n>{r['level']}</td><td class=n>{r['zoo']}/{r['zoo_total']}</td>"
+                f"<td class=n>{r['score']:,}</td><td class=n>{r['gems']}</td><td class=n>{r['best_egg']}</td>"
+                f"<td class=n>{r['save_ver'] or '—'}</td><td>{fmt_time(r['created'])}</td></tr>".replace(f"{r['score']:,}", f"{r['score']:,}".replace(",", " ")))
+        more = f"<p class=muted>Показаны первые 500 из {len(rows)}</p>" if len(rows) > 500 else ""
+        body = f"""<div class=stats>
+<div class=card><b>{total}</b>игроков</div><div class=card><b>{online}</b>сейчас в сети</div>
+<div class=card><b>{accounts}</b>с аккаунтом</div><div class=card><b>{today}</b>новых за сутки</div></div>
+<form class=search><input name=q value="{html.escape(q)}" placeholder="Поиск: ID, почта или имя"><button>Найти</button>
+{'<a href="/admin">сбросить</a>' if q else ''}</form>
+<div class=wrap><table><tr><th>ID</th><th>Имя</th><th>Почта</th><th>Статус</th><th>Уровень</th><th>Животные</th>
+<th>Монеты</th><th>Кристаллы</th><th>Лучшее яйцо</th><th>Версия сохр.</th><th>Создан</th></tr>
+{''.join(lines) or '<tr><td colspan=11 class=muted>Никого не найдено</td></tr>'}</table></div>{more}
+<p class=muted>Страница обновляется сама каждые 20 секунд. Нажмите на строку, чтобы открыть игрока.</p>"""
+        return self.send_html(200, admin_shell("Игроки", body, refresh=20))
+
+    def admin_player(self, pid):
+        now = time.time()
+        with _db_lock:
+            r = _db.execute("""SELECT p.*, a.email, a.created AS acc_created FROM players p
+                               LEFT JOIN accounts a ON a.player_id = p.id WHERE p.id=?""", (pid,)).fetchone()
+        if r is None:
+            return self.send_html(404, admin_shell("Нет игрока", "<p class=card>Игрок не найден. <a href='/admin'>К списку</a></p>"))
+        p = player_json(r, now)
+        try:
+            save = json.loads(r["save"]) if r["save"] else {}
+        except ValueError:
+            save = {}
+
+        def row(k, v):
+            return f"<tr><th>{k}</th><td>{v}</td></tr>"
+
+        status = "<span class=on>● в сети</span>" if p["online"] else f"<span class=off>● не в сети, {ago(p['lastSeenSec'])}</span>"
+        info = "".join([
+            row("ID", f"<b>{r['id']}</b>"), row("Имя", html.escape(nick(r))),
+            row("Почта", html.escape(r["email"]) if r["email"] else "гость (без аккаунта)"),
+            row("Статус", status), row("Последний раз в сети", fmt_time(r["last_seen"])),
+            row("Создан", fmt_time(r["created"])),
+            row("Аккаунт создан", fmt_time(r["acc_created"]) if r["acc_created"] else "—"),
+            row("Уровень", r["level"]), row("Животных открыто", f"{r['zoo']} из {r['zoo_total']}"),
+            row("Монеты", f"{r['score']:,}".replace(",", " ")), row("Кристаллы", r["gems"]),
+            row("Лучшее яйцо на поле", r["best_egg"]),
+        ])
+
+        zoo = "".join(f"<li class={'got' if i < r['zoo'] else 'lock'}>{html.escape(name)}</li>"
+                      for i, name in enumerate(ZOO_NAMES))
+        if save:
+            grid = save.get("grid") or []
+            cells = ""
+            for i in range(25):
+                lvl = grid[i] if i < len(grid) and isinstance(grid[i], int) else 0
+                color = EGG_COLORS[lvl] if 1 <= lvl <= 7 else "transparent"
+                cells += f"<div class=cell style='background:{color}'>{lvl or ''}</div>"
+            onoff = lambda v: "вкл" if v else "выкл"
+            save_html = "".join([
+                row("Версия сохранения", r["save_ver"]),
+                row("Энергия", f"{save.get('energy', '—')} / 10"),
+                row("Музыка / звуки", f"{onoff(save.get('music'))} / {onoff(save.get('sfx'))}"),
+            ]) + f"<tr><th>Поле</th><td><div class=grid>{cells}</div></td></tr>"
+        else:
+            save_html = row("Сохранение", "нет — игрок не входил в аккаунт")
+
+        body = f"""<p><a href="/admin">← ко всем игрокам</a></p>
+<div class=cols><div class=card><h3>Игрок</h3><table class=kv>{info}</table></div>
+<div class=card><h3>Сохранение на сервере</h3><table class=kv>{save_html}</table>
+<h3>Зоопарк</h3><ul class=zoo>{zoo}</ul></div></div>"""
+        return self.send_html(200, admin_shell(f"Игрок {r['id']}", body, refresh=20))
+
 
 # ---------------------------------------------------------------- автопоиск в сети
 
