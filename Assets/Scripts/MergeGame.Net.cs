@@ -1,6 +1,6 @@
 // Связь с сервером игроков (папка Server в корне проекта, запускается на ПК).
 //
-// • Адрес сервера ищется сам: сначала адрес из Assets/Resources/server_url.txt (если указан),
+// • Адрес сервера ищется сам: сначала адреса из Assets/Resources/server_url.txt (по порядку),
 //   потом последний рабочий адрес, потом поиск в локальной сети (UDP-запрос), потом 127.0.0.1.
 // • При первом подключении игрок получает 6-значный ID и секретный ключ (хранятся в PlayerPrefs).
 // • Каждые 20 секунд игра отправляет свой статус: имя, аватар, уровень, животных, монеты, кристаллы.
@@ -93,7 +93,8 @@ public partial class MergeGame
         SetNetState(NetState.Connecting);
         string found = null;
 
-        foreach (var candidate in new[] { ConfiguredUrl(), netUrl })
+        var candidates = new System.Collections.Generic.List<string>(ConfiguredUrls()) { netUrl };
+        foreach (var candidate in candidates)
         {
             if (string.IsNullOrEmpty(candidate) || found != null) continue;
             bool ok = false;
@@ -145,18 +146,20 @@ public partial class MergeGame
         SetNetState(NetState.Online);
     }
 
-    static string ConfiguredUrl()
+    // все адреса из server_url.txt по порядку: игра пробует их, пока один не ответит
+    static string[] ConfiguredUrls()
     {
+        var list = new System.Collections.Generic.List<string>();
         var ta = Resources.Load<TextAsset>("server_url");
-        if (ta == null) return null;
+        if (ta == null) return list.ToArray();
         foreach (var raw in ta.text.Split('\n'))
         {
             string line = raw.Trim();
-            if (line.Length == 0 || line.StartsWith("#")) continue;
+            if (line.Length == 0 || line.StartsWith("#") || line.Contains(" ")) continue;
             if (!line.StartsWith("http://") && !line.StartsWith("https://")) line = "http://" + line;
-            return line.TrimEnd('/');
+            list.Add(line.TrimEnd('/'));
         }
-        return null;
+        return list.ToArray();
     }
 
     IEnumerator Ping(string baseUrl, Action<bool> done)
