@@ -19,6 +19,8 @@ API (JSON):
   POST /api/account/login        {"email","password"}          -> {"ok","id","token","email","save","saveVer",...}
   POST /api/load                 {"id","token"}                -> {"ok","save","saveVer","email"}
   POST /api/save                 {"id","token","save","baseVer"} -> {"ok","saveVer"}  (409 — на сервере новее)
+  POST /api/account/reset/request {"email"}                    -> {"ok"}   письмо с кодом (503 email_disabled — почта не настроена)
+  POST /api/account/reset/confirm {"email","code","password"} -> как вход: {"ok","id","token",...}
   POST /api/grants/ack           {"id","token","ids":[...]}    -> {"ok"}   подарки администратора получены
   Ответ /api/status содержит "grants" — начисления/списания от администратора, ещё не полученные игрой.
   Заблокированный игрок получает 403 {"error":"banned","reason":...}.
@@ -28,6 +30,9 @@ API (JSON):
 import hashlib
 import hmac
 import html
+import smtplib
+import ssl
+from email.message import EmailMessage
 from urllib.parse import parse_qs, quote
 import json
 import os
@@ -48,6 +53,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 #   HATCHMERGE_PROXY=1      сервер стоит за Caddy: адрес игрока берётся из X-Forwarded-For
 #   HATCHMERGE_DISCOVERY=0  выключить автопоиск в локальной сети (на VPS он не нужен)
 #   HATCHMERGE_LIST=0       не показывать список игроков на главной странице (для интернета)
+#   HATCHMERGE_SMTP_HOST, HATCHMERGE_SMTP_PORT, HATCHMERGE_SMTP_USER, HATCHMERGE_SMTP_PASSWORD,
+#   HATCHMERGE_SMTP_FROM    почтовый ящик для писем с кодом сброса пароля (без них сброс — только через /admin)
 #   HATCHMERGE_ADMIN_PASSWORD  пароль страницы администратора /admin
 #                           (на VPS задаётся в /etc/hatchmerge.env; без пароля /admin открыт только
 #                           при запуске на своём ПК, а за Caddy — выключен)
@@ -58,6 +65,13 @@ DISCOVERY = os.environ.get("HATCHMERGE_DISCOVERY", "1") == "1"
 PUBLIC_LIST = os.environ.get("HATCHMERGE_LIST", "1") == "1"
 ADMIN_PASSWORD = os.environ.get("HATCHMERGE_ADMIN_PASSWORD", "")
 ADMIN_SESSION_HOURS = 12
+SMTP_HOST = os.environ.get("HATCHMERGE_SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("HATCHMERGE_SMTP_PORT", "465") or 465)
+SMTP_USER = os.environ.get("HATCHMERGE_SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("HATCHMERGE_SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("HATCHMERGE_SMTP_FROM", "") or SMTP_USER
+RESET_CODE_MINUTES = 15
+RESET_MAX_ATTEMPTS = 5
 DISCOVERY_PORT = 47777
 ONLINE_WINDOW = 70          # секунд без сообщений, после которых игрок считается «не в сети»
 NICK_A_COUNT = NICK_B_COUNT = 16
@@ -124,6 +138,13 @@ _db.execute("""
         canceled   INTEGER NOT NULL DEFAULT 0
     )""")
 _db.execute("CREATE INDEX IF NOT EXISTS grants_player ON grants(player_id, applied_at)")
+_db.execute("""
+    CREATE TABLE IF NOT EXISTS reset_codes (
+        email     TEXT PRIMARY KEY,
+        code_hash TEXT NOT NULL,
+        expires   REAL NOT NULL,
+        attempts  INTEGER NOT NULL DEFAULT 0
+    )""")
 _db.execute("""
     CREATE TABLE IF NOT EXISTS admin_log (
         id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -244,7 +265,8 @@ th{font-size:12px;color:var(--muted);font-weight:600}td.n{text-align:right;font-
 .zoo li{padding:6px 10px;border-radius:10px;background:var(--line)}.zoo li.lock{opacity:.45}
 .zoo li.got::before{content:"✓ ";color:var(--on)}
 .ban{color:var(--accent);font-weight:600}.plus{color:var(--on)}.minus{color:var(--accent)}
-.flash{border-left:4px solid var(--on)}.row{display:flex;gap:8px;flex-wrap:wrap}.row input{flex:1}
+.flash{border-left:4px solid var(--on)}.secret{border-left-color:var(--accent)}
+.pw{font-family:ui-monospace,Consolas,monospace;font-size:20px;letter-spacing:1px;user-select:all}.row{display:flex;gap:8px;flex-wrap:wrap}.row input{flex:1}
 button.ok{background:var(--on)}button.small{padding:4px 10px;font-size:13px}
 .grantf{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-items:end;margin-bottom:8px}
 .grantf label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
@@ -265,10 +287,53 @@ def admin_shell(title, body, refresh=0):
 <main>{body}</main></html>"""
 
 
+def smtp_enabled():
+    return bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD)
+
+
+def send_mail(to, subject, text):
+    """Отправить письмо (в отдельном потоке, чтобы не задерживать ответ игре)."""
+    def work():
+        msg = EmailMessage()
+        msg["From"] = f"Яйца-сюрпризы <{SMTP_FROM}>"
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg.set_content(text)
+        try:
+            ctx = ssl.create_default_context()
+            if SMTP_PORT == 465:
+                with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20, context=ctx) as smtp:
+                    smtp.login(SMTP_USER, SMTP_PASSWORD)
+                    smtp.send_message(msg)
+            else:
+                with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+                    smtp.starttls(context=ctx)
+                    smtp.login(SMTP_USER, SMTP_PASSWORD)
+                    smtp.send_message(msg)
+            print(f"{time.strftime('%H:%M:%S')}  письмо с кодом отправлено")
+        except Exception as e:                      # noqa: BLE001 — любую ошибку почты только пишем в журнал
+            print(f"{time.strftime('%H:%M:%S')}  НЕ удалось отправить письмо: {e}")
+    threading.Thread(target=work, daemon=True).start()
+
+
+def code_hash(email, code):
+    return hashlib.sha256(f"{email}:{code}".encode("utf-8")).hexdigest()
+
+
+def temp_password():
+    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"          # без похожих букв и цифр
+    return "".join(secrets.choice(alphabet) for _ in range(8))
+
+
 def admin_log(ip, pid, action, details):
     """Записать действие администратора (вызывать под _db_lock)."""
     _db.execute("INSERT INTO admin_log (ts, ip, player_id, action, details) VALUES (?,?,?,?,?)",
                 (time.time(), ip, pid, action, details))
+
+
+def login_json(row, email):
+    return {"ok": True, "id": row["id"], "token": row["token"], "email": email,
+            "nickA": row["nick_a"], "nickB": row["nick_b"], "save": row["save"], "saveVer": row["save_ver"]}
 
 
 def banned_json(row):
@@ -303,9 +368,13 @@ register_limit = RateLimiter(20, 3600)    # регистраций с одног
 admin_login_limit = RateLimiter(8, 900)   # попыток входа администратора за 15 минут
 admin_sessions = {}                        # cookie -> {"exp": время окончания, "csrf": токен форм}
 LOCAL_CSRF = secrets.token_urlsafe(16)     # токен форм, когда пароль не задан (сервер на своём ПК)
+LOCAL_STORE = {}                           # одноразовые сообщения, когда пароль не задан
 login_ip_limit = RateLimiter(20, 600)     # попыток входа с одного адреса за 10 минут
 login_email_limit = RateLimiter(10, 900)  # попыток входа в одну учётную запись за 15 минут
 account_limit = RateLimiter(10, 3600)     # привязок почты с одного адреса в час
+reset_ip_limit = RateLimiter(5, 3600)     # запросов кода сброса с одного адреса в час
+reset_email_limit = RateLimiter(3, 3600)  # писем с кодом на одну почту в час
+reset_try_limit = RateLimiter(20, 900)    # попыток ввести код с одного адреса за 15 минут
 lookup_limit = RateLimiter(60, 60)        # поисков с одного адреса в минуту
 
 # ---------------------------------------------------------------- HTTP
@@ -456,6 +525,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.account_register(body)
         if path == "/api/account/login":
             return self.account_login(body)
+        if path == "/api/account/reset/request":
+            return self.reset_request(body)
+        if path == "/api/account/reset/confirm":
+            return self.reset_confirm(body)
         if path == "/api/load":
             with _db_lock:
                 row, err = self.auth_player(body)
@@ -526,9 +599,64 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(401, {"ok": False, "error": "bad_login"})
         if row["banned"]:
             return self.send_json(403, banned_json(row))
-        return self.send_json(200, {"ok": True, "id": row["id"], "token": row["token"], "email": email,
-                                    "nickA": row["nick_a"], "nickB": row["nick_b"],
-                                    "save": row["save"], "saveVer": row["save_ver"]})
+        return self.send_json(200, login_json(row, email))
+
+    def reset_request(self, body):
+        if not smtp_enabled():
+            return self.send_json(503, {"ok": False, "error": "email_disabled"})
+        email = norm_email(body.get("email"))
+        if email is None:
+            return self.send_json(400, {"ok": False, "error": "bad_email"})
+        if not reset_ip_limit.allow(self.client_ip()) or not reset_email_limit.allow(email):
+            return self.send_json(429, {"ok": False, "error": "too_many_requests"})
+        with _db_lock:
+            acc = _db.execute("SELECT 1 FROM accounts WHERE email=?", (email,)).fetchone()
+            if acc:
+                code = f"{secrets.randbelow(1_000_000):06d}"
+                _db.execute("INSERT OR REPLACE INTO reset_codes (email, code_hash, expires, attempts) VALUES (?,?,?,0)",
+                            (email, code_hash(email, code), time.time() + RESET_CODE_MINUTES * 60))
+                _db.commit()
+        if acc:
+            send_mail(email, f"Код для сброса пароля: {code}",
+                      f"Здравствуйте!\n\nКод для сброса пароля в игре «Яйца-сюрпризы»: {code}\n"
+                      f"Он действует {RESET_CODE_MINUTES} минут.\n\n"
+                      "Если вы не запрашивали сброс пароля, просто не обращайте внимания на это письмо.")
+        # отвечаем одинаково, есть такая почта или нет, — чтобы нельзя было проверять чужие почты
+        return self.send_json(200, {"ok": True})
+
+    def reset_confirm(self, body):
+        email = norm_email(body.get("email"))
+        code = re.sub(r"\D", "", str(body.get("code", "")))
+        password = str(body.get("password", ""))
+        if email is None:
+            return self.send_json(400, {"ok": False, "error": "bad_email"})
+        if not 6 <= len(password) <= 128:
+            return self.send_json(400, {"ok": False, "error": "weak_password"})
+        if not reset_try_limit.allow(self.client_ip()):
+            return self.send_json(429, {"ok": False, "error": "too_many_requests"})
+        pass_hash = hash_password(password)
+        with _db_lock:
+            rc = _db.execute("SELECT * FROM reset_codes WHERE email=?", (email,)).fetchone()
+            if rc is None or rc["expires"] < time.time() or rc["attempts"] >= RESET_MAX_ATTEMPTS:
+                return self.send_json(400, {"ok": False, "error": "bad_code"})
+            if not hmac.compare_digest(rc["code_hash"], code_hash(email, code)):
+                _db.execute("UPDATE reset_codes SET attempts=attempts+1 WHERE email=?", (email,))
+                _db.commit()
+                return self.send_json(400, {"ok": False, "error": "bad_code"})
+            acc = _db.execute("SELECT * FROM accounts WHERE email=?", (email,)).fetchone()
+            row = _db.execute("SELECT * FROM players WHERE id=?", (acc["player_id"],)).fetchone() if acc else None
+            if row is None:
+                return self.send_json(400, {"ok": False, "error": "bad_code"})
+            if row["banned"]:
+                return self.send_json(403, banned_json(row))
+            # новый пароль и новый ключ игрока: другие устройства выйдут из аккаунта
+            _db.execute("UPDATE accounts SET pass_hash=? WHERE email=?", (pass_hash, email))
+            _db.execute("UPDATE players SET token=? WHERE id=?", (secrets.token_hex(16), row["id"]))
+            _db.execute("DELETE FROM reset_codes WHERE email=?", (email,))
+            _db.commit()
+            row = _db.execute("SELECT * FROM players WHERE id=?", (row["id"],)).fetchone()
+        print(f"{time.strftime('%H:%M:%S')}  пароль сброшен по коду — ID {row['id']}")
+        return self.send_json(200, login_json(row, email))
 
     # ---- страница для проверки в браузере
     def send_page(self):
@@ -737,7 +865,16 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
 
     def flash(self):
         msg = parse_qs(self.path.partition("?")[2]).get("msg", [""])[0][:200]
-        return f"<p class='card flash'>{html.escape(msg)}</p>" if msg else ""
+        secret = self.session_store().pop("secret", "")
+        out = f"<p class='card flash'>{html.escape(msg)}</p>" if msg else ""
+        if secret:
+            out += f"<p class='card flash secret'>{secret}</p>"
+        return out
+
+    def session_store(self):
+        if not ADMIN_PASSWORD:
+            return LOCAL_STORE
+        return admin_sessions.get(self.session_cookie(), {})
 
     def admin_manage(self, r):
         pid, csrf = r["id"], html.escape(self.admin_csrf())
@@ -755,6 +892,13 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
 <form method=post action="/admin/player/{pid}/ban" class=row>{hidden}
 <input name=reason maxlength=200 placeholder="Причина (её увидит игрок)">
 <button onclick="return confirm('Заблокировать игрока {pid}?')">Заблокировать</button></form>"""
+
+        if r["email"]:
+            ban += f"""<h3>Пароль</h3>
+<p class=muted>Создать временный пароль для {html.escape(r['email'])}. Он появится здесь один раз — передайте его родителю.
+Игрок на всех устройствах выйдет из аккаунта и войдёт с новым паролем.</p>
+<form method=post action="/admin/player/{pid}/resetpw">{hidden}
+<button onclick="return confirm('Сбросить пароль игрока {pid}?')">Сбросить пароль</button></form>"""
 
         def signed(v, unit):
             return f"<span class={'plus' if v > 0 else 'minus'}>{'+' if v > 0 else '−'}{abs(v):,} {unit}</span>".replace(",", " ") if v else ""
@@ -816,7 +960,7 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
                 _db.commit()
             return self.redirect(f"/admin/player/{g['player_id']}?msg={quote(msg)}")
 
-        m = re.fullmatch(r"/admin/player/(\d{6})/(grant|ban|unban)", path)
+        m = re.fullmatch(r"/admin/player/(\d{6})/(grant|ban|unban|resetpw)", path)
         if not m:
             return self.redirect("/admin")
         pid, action = m.groups()
@@ -842,6 +986,18 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
                 _db.execute("UPDATE players SET banned=1, ban_reason=?, banned_at=?, online=0 WHERE id=?", (reason, now, pid))
                 admin_log(ip, pid, "Блокировка", reason)
                 msg = "Игрок заблокирован"
+            elif action == "resetpw":
+                acc = _db.execute("SELECT email FROM accounts WHERE player_id=?", (pid,)).fetchone()
+                if acc is None:
+                    msg = "У игрока нет аккаунта — пароль сбрасывать нечего"
+                else:
+                    pw = temp_password()
+                    _db.execute("UPDATE accounts SET pass_hash=? WHERE player_id=?", (hash_password(pw), pid))
+                    _db.execute("UPDATE players SET token=? WHERE id=?", (secrets.token_hex(16), pid))
+                    admin_log(ip, pid, "Сброс пароля", acc["email"])
+                    msg = "Пароль сброшен"
+                    self.session_store()["secret"] = (f"Временный пароль для {html.escape(acc['email'])}: "
+                                                      f"<b class=pw>{pw}</b> — сейчас он показан в последний раз")
             else:
                 _db.execute("UPDATE players SET banned=0, ban_reason='', banned_at=0 WHERE id=?", (pid,))
                 admin_log(ip, pid, "Разблокировка", "")

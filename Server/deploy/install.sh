@@ -62,6 +62,16 @@ echo "==> Пароль страницы администратора (/admin)"
 if ! grep -q '^HATCHMERGE_ADMIN_PASSWORD=.' /etc/hatchmerge.env 2>/dev/null; then
   echo "HATCHMERGE_ADMIN_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_urlsafe(12))')" > /etc/hatchmerge.env
 fi
+if ! grep -q 'HATCHMERGE_SMTP_HOST' /etc/hatchmerge.env; then
+  cat >> /etc/hatchmerge.env <<'ENV'
+# Почта для писем с кодом сброса пароля. Уберите # в четырёх строках ниже, впишите свой ящик
+# и пароль приложения, затем выполните: systemctl restart hatchmerge
+#HATCHMERGE_SMTP_HOST=smtp.yandex.ru
+#HATCHMERGE_SMTP_PORT=465
+#HATCHMERGE_SMTP_USER=ваш_ящик@yandex.ru
+#HATCHMERGE_SMTP_PASSWORD=пароль_приложения
+ENV
+fi
 chmod 600 /etc/hatchmerge.env
 ADMIN_PW="$(grep '^HATCHMERGE_ADMIN_PASSWORD=' /etc/hatchmerge.env | head -n 1 | cut -d= -f2-)"
 
@@ -184,6 +194,11 @@ echo
 echo " Страница администратора: https://$DOMAIN/admin"
 echo " Пароль администратора:   $ADMIN_PW"
 echo " (хранится в /etc/hatchmerge.env — там же его можно заменить, затем: systemctl restart hatchmerge)"
+if grep -q '^HATCHMERGE_SMTP_HOST=' /etc/hatchmerge.env; then
+  echo " Сброс пароля по почте: включён"
+else
+  echo " Сброс пароля по почте: выключен — настройте почту в /etc/hatchmerge.env (см. DEPLOY.md)"
+fi
 echo " Журнал сервера:   journalctl -u hatchmerge -f"
 echo " Резервные копии:  /var/backups/hatchmerge (каждый день в 03:30)"
 echo "========================================================"

@@ -7,6 +7,8 @@
 // • Пока игрок в аккаунте, изменения отправляются на сервер не чаще раза в 6 секунд.
 //   У каждого сохранения есть номер версии: если другое устройство успело сохранить новее,
 //   сервер отвечает 409 и игра загружает более новую версию.
+// • «Забыли пароль?»: код из письма + новый пароль (если на сервере настроена почта),
+//   иначе администратор выдаёт временный пароль на странице /admin.
 // • Текст вводится без EventSystem: на телефоне открывается системная клавиатура,
 //   на компьютере буквы приходят через OnGUI (работают обычная клавиатура и Ctrl+V).
 
@@ -26,6 +28,7 @@ class GameSave
 [Serializable] class NetAccountReq { public string id, token, email, password; }
 [Serializable] class NetLoginReq { public string email, password; }
 [Serializable] class NetAuthReq { public string id, token; }
+[Serializable] class NetResetReq { public string email, code, password; }
 [Serializable] class NetSaveReq { public string id, token, save; public long baseVer; }
 
 [Serializable]
@@ -63,13 +66,21 @@ public partial class MergeGame
         public bool secret, reveal;
         public int max = 64;
         public TouchScreenKeyboardType kb;
+        public Text showTxt;          // «Показать/Скрыть» у полей пароля
+        public Action submit;         // что делать по Enter / «Готово» в последнем поле формы
     }
+
+    readonly System.Collections.Generic.List<TextField> fields = new System.Collections.Generic.List<TextField>();
+    RectTransform accLogin, accReset;
+    Text accForgotTxt, accResetMsg;
+    TextField resetEmailField, resetCodeField, resetPassField;
+    bool accResetMode;
 
     RectTransform accountPanel, accGuest, accUser;
     readonly Image[] accModeImg = new Image[2];
     readonly Text[] accModeTxt = new Text[2];
     Image accMainImg;
-    Text accMainTxt, accMsg, accHint, accShowTxt, accEmailTxt, accIdTxt, accSyncTxt, accLogoutTxt, accUserMsg, setAccTxt;
+    Text accMainTxt, accMsg, accHint, accEmailTxt, accIdTxt, accSyncTxt, accLogoutTxt, accUserMsg, setAccTxt;
     TextField accEmailField, accPassField, focused;
     TouchScreenKeyboard tsk;
 
@@ -266,7 +277,13 @@ public partial class MergeGame
         accBusy = false;
 
         if (code != 200 || r == null || !r.ok || string.IsNullOrEmpty(r.id)) { GameAudio.Deny(); AccMessage(AccError(code, r), true); yield break; }
+        CompleteLogin(r);
+        AccMessage("Вы вошли. Прогресс загружен из аккаунта", false, true);
+    }
 
+    // общий конец входа: по паролю или после сброса пароля
+    void CompleteLogin(NetAccountResp r)
+    {
         netId = r.id; netToken = r.token;
         PlayerPrefs.SetString("net_id", netId);
         PlayerPrefs.SetString("net_token", netToken);
@@ -283,10 +300,76 @@ public partial class MergeGame
         PlayerPrefs.Save();
 
         accPassField.value = "";
+        resetCodeField.value = resetPassField.value = "";
+        accResetMode = false;
         GameAudio.Buy();
         KickNet();
         RefreshAccount();
-        AccMessage("Вы вошли. Прогресс загружен из аккаунта", false, true);
+    }
+
+    // ---------- сброс пароля ----------
+    void OpenReset(bool on)
+    {
+        Blur();
+        accResetMode = on;
+        if (on && resetEmailField.value.Length == 0) resetEmailField.value = accEmailField.value.Trim();
+        if (!on && accEmailField.value.Length == 0) accEmailField.value = resetEmailField.value;
+        GameAudio.Click();
+        AccMessage("", false);
+        RefreshAccount();
+    }
+
+    void ResetRequest()
+    {
+        if (accBusy) return;
+        Blur();
+        string email = resetEmailField.value.Trim();
+        if (email.IndexOf('@') < 1 || email.IndexOf('.') < 0) { GameAudio.Deny(); AccMessage("Проверьте адрес почты", true); return; }
+        if (netState != NetState.Online) { GameAudio.Deny(); AccMessage("Нет связи с сервером", true); KickNet(); return; }
+        GameAudio.Click();
+        StartCoroutine(DoResetRequest(email));
+    }
+
+    IEnumerator DoResetRequest(string email)
+    {
+        accBusy = true;
+        AccMessage("Отправляем код…", false);
+        long code = 0;
+        NetAccountResp r = null;
+        yield return Http("POST", netUrl, "/api/account/reset/request", JsonUtility.ToJson(new NetLoginReq { email = email }),
+            (c, t) => { code = c; r = Parse<NetAccountResp>(t); }, 15);
+        accBusy = false;
+        if (code == 200) AccMessage("Если эта почта зарегистрирована, на неё пришло письмо с кодом. Проверьте и папку «Спам».", false, true);
+        else { GameAudio.Deny(); AccMessage(AccError(code, r), true); }
+        RefreshAccount();
+    }
+
+    void ResetConfirm()
+    {
+        if (accBusy) return;
+        Blur();
+        string email = resetEmailField.value.Trim(), codeTxt = resetCodeField.value.Trim(), pass = resetPassField.value;
+        if (email.IndexOf('@') < 1) { GameAudio.Deny(); AccMessage("Проверьте адрес почты", true); return; }
+        if (codeTxt.Length != 6) { GameAudio.Deny(); AccMessage("Код из письма — 6 цифр", true); return; }
+        if (pass.Length < 6) { GameAudio.Deny(); AccMessage("Новый пароль — не короче 6 символов", true); return; }
+        if (netState != NetState.Online) { GameAudio.Deny(); AccMessage("Нет связи с сервером", true); KickNet(); return; }
+        GameAudio.Click();
+        StartCoroutine(DoResetConfirm(email, codeTxt, pass));
+    }
+
+    IEnumerator DoResetConfirm(string email, string codeTxt, string pass)
+    {
+        accBusy = true;
+        AccMessage("Меняем пароль…", false);
+        long code = 0;
+        NetAccountResp r = null;
+        var req = new NetResetReq { email = email, code = codeTxt, password = pass };
+        yield return Http("POST", netUrl, "/api/account/reset/confirm", JsonUtility.ToJson(req),
+            (c, t) => { code = c; r = Parse<NetAccountResp>(t); }, 15);
+        accBusy = false;
+        if (code != 200 || r == null || !r.ok || string.IsNullOrEmpty(r.id)) { GameAudio.Deny(); AccMessage(AccError(code, r), true); RefreshAccount(); yield break; }
+        CompleteLogin(r);
+        AccMessage("Пароль изменён, вы вошли в аккаунт", false, true);
     }
 
     IEnumerator DoRegister(string email, string pass)
@@ -328,6 +411,8 @@ public partial class MergeGame
             case "already_linked": return "Этот игрок уже привязан к другой почте";
             case "bad_login": return "Неверная почта или пароль";
             case "too_many_requests": return "Слишком много попыток. Подождите 15 минут";
+            case "bad_code": return "Неверный или устаревший код. Запросите новый";
+            case "email_disabled": return "Сброс по почте пока не настроен. Напишите администратору игры — он выдаст временный пароль";
             case "banned": return "Этот аккаунт заблокирован" + (string.IsNullOrEmpty(r.reason) ? "" : ": " + r.reason);
             case "not_found": return "На сервере старая версия — обновите сервер (deploy_to_vps.bat)";
             default: return "Ошибка сервера (" + code + ")";
@@ -376,34 +461,57 @@ public partial class MergeGame
 
         // --- гость: вход или регистрация ---
         accGuest = TL(accountPanel, 0, 0, 390, 700, "Guest");
+        accLogin = TL(accGuest, 0, 0, 390, 700, "Login");
         string[] modes = { "Вход", "Регистрация" };
         for (int i = 0; i < 2; i++)
         {
             int m = i;
-            var pill = TL(accGuest, 20 + i * 179, 166, 171, 40, "Mode");
+            var pill = TL(accLogin, 20 + i * 179, 166, 171, 40, "Mode");
             accModeImg[i] = Round(pill, Color.white, 20);
             accModeTxt[i] = Label(pill, modes[i], 15, Ink, TextAnchor.MiddleCenter, 0, 0, 171, 40);
             AddBtn(pill, () => { accRegisterMode = m == 1; GameAudio.Click(); AccMessage("", false); RefreshAccount(); }, TabAccount);
         }
 
-        accEmailField = MakeField(accGuest, 218, "Почта", false, TouchScreenKeyboardType.EmailAddress, 254);
-        accPassField = MakeField(accGuest, 280, "Пароль", true, TouchScreenKeyboardType.Default, 128);
+        accEmailField = MakeField(accLogin, 218, "Почта", false, TouchScreenKeyboardType.EmailAddress, 254);
+        accPassField = MakeField(accLogin, 280, "Пароль", true, TouchScreenKeyboardType.Default, 128);
+        accPassField.submit = AccSubmit;
 
-        // кнопка «Показать» внутри поля пароля — регистрируем раньше самого поля, чтобы нажатие попало в неё
-        var show = TL(accPassField.rt, 262, 8, 80, 36, "Show");
-        Round(show, C(238, 227, 247), 18);
-        accShowTxt = Label(show, "Показать", 12, Ink, TextAnchor.MiddleCenter, 0, 0, 80, 36);
-        AddBtn(show, () => { accPassField.reveal = !accPassField.reveal; GameAudio.Click(); RefreshFields(); }, TabAccount);
-        AddBtn(accEmailField.rt, () => FocusField(accEmailField), TabAccount);
-        AddBtn(accPassField.rt, () => FocusField(accPassField), TabAccount);
-
-        var main = TL(accGuest, 20, 344, 350, 56, "Submit");
+        var main = TL(accLogin, 20, 344, 350, 56, "Submit");
         accMainImg = Round(main, Red, 28);
         accMainTxt = Label(main, "Войти", 19, Color.white, TextAnchor.MiddleCenter, 0, 0, 350, 56);
         AddBtn(main, AccSubmit, TabAccount);
 
-        accMsg = WrapLabel(accGuest, "", 14, Red, TextAnchor.UpperCenter, 20, 410, 350, 40);
-        accHint = WrapLabel(accGuest, "", 12, Muted, TextAnchor.UpperCenter, 20, 458, 350, 60);
+        var forgot = TL(accLogin, 95, 406, 200, 30, "Forgot");
+        accForgotTxt = Label(forgot, "Забыли пароль?", 14, Red, TextAnchor.MiddleCenter, 0, 0, 200, 30);
+        AddBtn(forgot, () => OpenReset(true), TabAccount);
+
+        accMsg = WrapLabel(accLogin, "", 14, Red, TextAnchor.UpperCenter, 20, 442, 350, 40);
+        accHint = WrapLabel(accLogin, "", 12, Muted, TextAnchor.UpperCenter, 20, 488, 350, 60);
+
+        // --- сброс пароля ---
+        accReset = TL(accGuest, 0, 0, 390, 700, "Reset");
+        Label(accReset, "Сброс пароля", 18, Ink, TextAnchor.MiddleLeft, 20, 166, 200, 32);
+        var back = TL(accReset, 250, 166, 120, 32, "Back");
+        Label(back, "← Ко входу", 14, Red, TextAnchor.MiddleRight, 0, 0, 120, 32);
+        AddBtn(back, () => OpenReset(false), TabAccount);
+
+        Label(accReset, "1. Почта аккаунта — пришлём на неё код", 13, Muted, TextAnchor.MiddleLeft, 20, 200, 350, 22);
+        resetEmailField = MakeField(accReset, 224, "Почта", false, TouchScreenKeyboardType.EmailAddress, 254);
+        resetEmailField.submit = ResetRequest;
+        var send = TL(accReset, 20, 284, 350, 48, "SendCode");
+        Round(send, Color.white, 24);
+        Label(send, "Получить код", 16, Ink, TextAnchor.MiddleCenter, 0, 0, 350, 48);
+        AddBtn(send, ResetRequest, TabAccount);
+
+        Label(accReset, "2. Код из письма и новый пароль", 13, Muted, TextAnchor.MiddleLeft, 20, 344, 350, 22);
+        resetCodeField = MakeField(accReset, 368, "Код из письма (6 цифр)", false, TouchScreenKeyboardType.NumberPad, 6);
+        resetPassField = MakeField(accReset, 428, "Новый пароль", true, TouchScreenKeyboardType.Default, 128);
+        resetPassField.submit = ResetConfirm;
+        var change = TL(accReset, 20, 490, 350, 56, "Change");
+        Round(change, Red, 28);
+        Label(change, "Сменить пароль и войти", 18, Color.white, TextAnchor.MiddleCenter, 0, 0, 350, 56);
+        AddBtn(change, ResetConfirm, TabAccount);
+        accResetMsg = WrapLabel(accReset, "", 14, Red, TextAnchor.UpperCenter, 20, 554, 350, 60);
 
         // --- вошедший игрок ---
         accUser = TL(accountPanel, 0, 0, 390, 700, "User");
@@ -443,6 +551,16 @@ public partial class MergeGame
         f.txt = Label(f.rt, "", 17, Ink, TextAnchor.MiddleLeft, 18, 0, secret ? 236 : 314, 52);
         f.txt.horizontalOverflow = HorizontalWrapMode.Wrap;   // длинный текст не вылезает за поле
         f.txt.verticalOverflow = VerticalWrapMode.Truncate;
+        if (secret)
+        {
+            // кнопка «Показать» внутри поля — регистрируем раньше самого поля, чтобы нажатие попало в неё
+            var show = TL(f.rt, 262, 8, 80, 36, "Show");
+            Round(show, C(238, 227, 247), 18);
+            f.showTxt = Label(show, "Показать", 12, Ink, TextAnchor.MiddleCenter, 0, 0, 80, 36);
+            AddBtn(show, () => { f.reveal = !f.reveal; GameAudio.Click(); RefreshFields(); }, TabAccount);
+        }
+        AddBtn(f.rt, () => FocusField(f), TabAccount);
+        fields.Add(f);
         return f;
     }
 
@@ -460,9 +578,10 @@ public partial class MergeGame
 
     void AccMessage(string s, bool error, bool good = false)
     {
-        var t = HasAccount ? accUserMsg : accMsg;
+        var t = HasAccount ? accUserMsg : accResetMode ? accResetMsg : accMsg;
         if (t == null) return;
         if (accMsg != null && t != accMsg) accMsg.text = "";
+        if (accResetMsg != null && t != accResetMsg) accResetMsg.text = "";
         t.text = s;
         t.color = error ? Red : good ? C(60, 150, 110) : Muted;
     }
@@ -476,6 +595,9 @@ public partial class MergeGame
         bool logged = HasAccount;
         accGuest.gameObject.SetActive(!logged);
         accUser.gameObject.SetActive(logged);
+        accLogin.gameObject.SetActive(!accResetMode);
+        accReset.gameObject.SetActive(accResetMode);
+        accForgotTxt.transform.parent.gameObject.SetActive(!accRegisterMode);
 
         for (int i = 0; i < 2; i++)
         {
@@ -500,7 +622,7 @@ public partial class MergeGame
     void RefreshFields()
     {
         if (accEmailField == null) return;
-        foreach (var f in new[] { accEmailField, accPassField })
+        foreach (var f in fields)
         {
             bool foc = f == focused;
             bool caret = foc && tsk == null && Mathf.Repeat(Time.unscaledTime, 1f) < 0.55f;
@@ -512,8 +634,8 @@ public partial class MergeGame
                 f.txt.color = Ink;
             }
             f.bg.color = foc ? C(244, 236, 252) : Color.white;
+            if (f.showTxt != null) f.showTxt.text = f.reveal ? "Скрыть" : "Показать";
         }
-        accShowTxt.text = accPassField.reveal ? "Скрыть" : "Показать";
     }
 
     // ---------- ввод текста ----------
@@ -539,7 +661,8 @@ public partial class MergeGame
     void TypeChar(char c)
     {
         if (focused == null || char.IsControl(c) || focused.value.Length >= focused.max) return;
-        if (focused == accEmailField && char.IsWhiteSpace(c)) return;
+        if (focused.kb == TouchScreenKeyboardType.EmailAddress && char.IsWhiteSpace(c)) return;
+        if (focused.kb == TouchScreenKeyboardType.NumberPad && (c < '0' || c > '9')) return;
         focused.value += c;
     }
 
@@ -550,8 +673,21 @@ public partial class MergeGame
 
     void FieldEnter()
     {
-        if (focused == accEmailField) FocusField(accPassField);
-        else AccSubmit();
+        if (focused == null) return;
+        if (focused.submit != null) { var act = focused.submit; act(); }
+        else NextField();
+    }
+
+    // следующее видимое поле (Tab, Enter в поле без своего действия)
+    void NextField()
+    {
+        if (focused == null) return;
+        int start = fields.IndexOf(focused);
+        for (int k = 1; k <= fields.Count; k++)
+        {
+            var f = fields[(start + k) % fields.Count];
+            if (f.rt.gameObject.activeInHierarchy) { FocusField(f); return; }
+        }
     }
 
     void FieldPaste()
@@ -579,13 +715,15 @@ public partial class MergeGame
             // телефон: текст берём из системной клавиатуры
             string t = tsk.text ?? "";
             if (t.Length > focused.max) t = t.Substring(0, focused.max);
-            focused.value = focused == accEmailField ? t.Trim() : t;
+            if (focused.kb == TouchScreenKeyboardType.EmailAddress) t = t.Trim();
+            if (focused.kb == TouchScreenKeyboardType.NumberPad) t = System.Text.RegularExpressions.Regex.Replace(t, "[^0-9]", "");
+            focused.value = t;
             if (tsk.status == TouchScreenKeyboard.Status.Done)
             {
                 var f = focused;
                 tsk = null;
                 focused = null;
-                if (f == accPassField) AccSubmit();
+                if (f.submit != null) f.submit();
             }
             else if (tsk.status != TouchScreenKeyboard.Status.Visible) { tsk = null; focused = null; }
         }
@@ -604,7 +742,7 @@ public partial class MergeGame
         if ((e.control || e.command) && e.keyCode == KeyCode.V) FieldPaste();
         else if (e.keyCode == KeyCode.Backspace) FieldBackspace();
         else if (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter) FieldEnter();
-        else if (e.keyCode == KeyCode.Tab) FocusField(focused == accEmailField ? accPassField : accEmailField);
+        else if (e.keyCode == KeyCode.Tab) NextField();
         else if (e.character != '\0' && !e.control && !e.command) TypeChar(e.character);
         else return;
         e.Use();
