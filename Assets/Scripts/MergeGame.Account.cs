@@ -8,16 +8,12 @@
 //   У каждого сохранения есть номер версии: если другое устройство успело сохранить новее,
 //   сервер отвечает 409 и игра загружает более новую версию.
 // • Текст вводится без EventSystem: на телефоне открывается системная клавиатура,
-//   на компьютере работают обычная клавиатура и Ctrl+V.
+//   на компьютере буквы приходят через OnGUI (работают обычная клавиатура и Ctrl+V).
 
 using System;
 using System.Collections;
-using System.Text;
 using UnityEngine;
 using UnityEngine.UI;
-#if ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem;
-#endif
 
 [Serializable]
 class GameSave
@@ -76,10 +72,6 @@ public partial class MergeGame
     Text accMainTxt, accMsg, accHint, accShowTxt, accEmailTxt, accIdTxt, accSyncTxt, accLogoutTxt, accUserMsg, setAccTxt;
     TextField accEmailField, accPassField, focused;
     TouchScreenKeyboard tsk;
-#if ENABLE_INPUT_SYSTEM
-    readonly StringBuilder typed = new StringBuilder();
-    bool typedHooked;
-#endif
 
     void InitAccount()
     {
@@ -529,7 +521,8 @@ public partial class MergeGame
         Blur();
         focused = f;
         GameAudio.Click();
-        if (TouchScreenKeyboard.isSupported)
+        // в редакторе (в том числе в Device Simulator) печатаем с клавиатуры компьютера
+        if (TouchScreenKeyboard.isSupported && !Application.isEditor)
             tsk = TouchScreenKeyboard.Open(f.value, f.kb, false, false, f.secret, false, f.placeholder);
         RefreshFields();
     }
@@ -573,15 +566,9 @@ public partial class MergeGame
             if (logoutArm <= 0f && accLogoutTxt != null) accLogoutTxt.text = "Выйти из аккаунта";
         }
 
-#if ENABLE_INPUT_SYSTEM
-        if (!typedHooked && Keyboard.current != null) { Keyboard.current.onTextInput += c => typed.Append(c); typedHooked = true; }
-#endif
         if (tab != TabAccount || focused == null)
         {
             if (focused != null) Blur();
-#if ENABLE_INPUT_SYSTEM
-            typed.Clear();
-#endif
             return;
         }
 
@@ -600,35 +587,25 @@ public partial class MergeGame
             }
             else if (tsk.status != TouchScreenKeyboard.Status.Visible) { tsk = null; focused = null; }
         }
-        else
-        {
-            // компьютер: обычная клавиатура
-#if ENABLE_INPUT_SYSTEM
-            var kb = Keyboard.current;
-            for (int i = 0; i < typed.Length; i++) TypeChar(typed[i]);
-            typed.Clear();
-            if (kb != null)
-            {
-                if (kb.backspaceKey.wasPressedThisFrame) FieldBackspace();
-                if (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame) FieldEnter();
-                else if (kb.tabKey.wasPressedThisFrame) FocusField(focused == accEmailField ? accPassField : accEmailField);
-                if ((kb.ctrlKey.isPressed || kb.leftCommandKey.isPressed) && kb.vKey.wasPressedThisFrame) FieldPaste();
-            }
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl) ||
-                        Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand);
-            if (ctrl && Input.GetKeyDown(KeyCode.V)) FieldPaste();
-            else
-                foreach (char c in Input.inputString)
-                {
-                    if (focused == null) break;
-                    if (c == '\b') FieldBackspace();
-                    else if (c == '\n' || c == '\r') { FieldEnter(); break; }
-                    else if (c == '\t') { FocusField(focused == accEmailField ? accPassField : accEmailField); break; }
-                    else TypeChar(c);
-                }
-#endif
-        }
+        RefreshFields();
+    }
+
+    // компьютер (и редактор Unity): буквы приходят как события клавиатуры IMGUI —
+    // так ввод работает и в Game view, и в Device Simulator, при любой системе ввода
+    void OnGUI()
+    {
+        var e = Event.current;
+        if (e.type != EventType.KeyDown) return;
+        if (tab == TabPlayers) { if (PlayersKey(e)) e.Use(); return; }
+        if (focused == null || tsk != null || tab != TabAccount) return;
+
+        if ((e.control || e.command) && e.keyCode == KeyCode.V) FieldPaste();
+        else if (e.keyCode == KeyCode.Backspace) FieldBackspace();
+        else if (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter) FieldEnter();
+        else if (e.keyCode == KeyCode.Tab) FocusField(focused == accEmailField ? accPassField : accEmailField);
+        else if (e.character != '\0' && !e.control && !e.command) TypeChar(e.character);
+        else return;
+        e.Use();
         RefreshFields();
     }
 }

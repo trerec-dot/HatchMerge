@@ -1,12 +1,9 @@
 // Экран «Игроки»: мой профиль и ID, поиск другого игрока по ID и его статус
 // (в сети / не в сети, уровень, животные, монеты, кристаллы).
-// ID вводится экранной цифровой клавиатурой (на компьютере работают и цифры на клавиатуре).
+// ID вводится экранной цифровой клавиатурой (на компьютере — и цифрами на клавиатуре, через OnGUI).
 
 using UnityEngine;
 using UnityEngine.UI;
-#if ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem;
-#endif
 
 public partial class MergeGame
 {
@@ -196,34 +193,21 @@ public partial class MergeGame
     {
         if (tab != TabPlayers) return;
 
-        // ввод ID с клавиатуры компьютера
-#if ENABLE_INPUT_SYSTEM
-        var kb = Keyboard.current;
-        if (kb != null)
-        {
-            for (int i = 0; i <= 9; i++)
-            {
-                Key top = i == 0 ? Key.Digit0 : Key.Digit1 + (i - 1);   // в перечислении Digit0 стоит после Digit9
-                if (kb[top].wasPressedThisFrame || kb[Key.Numpad0 + i].wasPressedThisFrame)
-                    TypeDigit((char)('0' + i));
-            }
-            if (kb.backspaceKey.wasPressedThisFrame) Backspace();
-            if (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame) DoSearch();
-        }
-#elif ENABLE_LEGACY_INPUT_MANAGER
-        foreach (char ch in Input.inputString)
-        {
-            if (ch >= '0' && ch <= '9') TypeDigit(ch);
-            else if (ch == '\b') Backspace();
-            else if (ch == '\n' || ch == '\r') DoSearch();
-        }
-#endif
-
         // статус найденного игрока обновляется сам
         if (shownId != null && netState == NetState.Online && foundInfo.gameObject.activeSelf)
         {
             foundT += dt;
             if (foundT >= FoundRefresh) { foundT = 0f; StartCoroutine(FetchPlayer(shownId, false)); }
         }
+    }
+
+    // цифры, Backspace и Enter с клавиатуры компьютера (вызывается из OnGUI)
+    bool PlayersKey(Event e)
+    {
+        if (e.keyCode == KeyCode.Backspace) Backspace();
+        else if (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter) DoSearch();
+        else if (e.character >= '0' && e.character <= '9') TypeDigit(e.character);
+        else return false;
+        return true;
     }
 }
