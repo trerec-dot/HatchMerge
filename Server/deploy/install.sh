@@ -23,6 +23,10 @@ apt-get install -y python3 curl ufw gnupg apt-transport-https ca-certificates
 
 PUBLIC_IP="$(curl -4 -fsS --max-time 10 https://api.ipify.org || hostname -I | awk '{print $1}')"
 DOMAIN="${1:-}"
+if [[ -n "$DOMAIN" && ! "$DOMAIN" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]]; then
+  echo "!!  '$DOMAIN' не похоже на домен (нужен вид game.example.com) — устанавливаю без домена"
+  DOMAIN=""
+fi
 EMAIL="${2:-}"   # с почтой Caddy может брать сертификат и у ZeroSSL, если у Let's Encrypt исчерпан лимит
 if [[ -z "$DOMAIN" ]]; then
   DOMAIN="${PUBLIC_IP//./-}.sslip.io"
