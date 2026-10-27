@@ -176,6 +176,8 @@ public partial class MergeGame
 
     void ForgetAccountLocal()
     {
+        pendCoins = pendGems = pendEnergy = 0;
+        SavePending();
         accEmail = "";
         accLoaded = false;
         SetAccVer(0);
@@ -200,7 +202,7 @@ public partial class MergeGame
             if (r.saveVer > accVer && !string.IsNullOrEmpty(r.save))
             {
                 // на сервере новее — например, играли на другом устройстве
-                if (ApplySave(r.save)) { SetAccVer(r.saveVer); ClearSaveDirty(); Toast("Прогресс загружен с сервера"); }
+                if (ApplySave(r.save)) { SetAccVer(r.saveVer); ClearSaveDirty(); ReapplyPendingGrants(); Toast("Прогресс загружен с сервера"); }
             }
             else if (r.saveVer < accVer || string.IsNullOrEmpty(r.save))
             {
@@ -225,6 +227,7 @@ public partial class MergeGame
         if (code == 200 && r != null)
         {
             SetAccVer(r.saveVer);
+            ClearPendingGrants();                        // подарки уже внутри отправленного сохранения
             if (stamp == accStamp) ClearSaveDirty();     // во время отправки ходов не было
         }
         else if (code == 409 && r != null && !string.IsNullOrEmpty(r.save))
@@ -233,6 +236,7 @@ public partial class MergeGame
             if (ApplySave(r.save)) Toast("Загружен прогресс с другого устройства");
             SetAccVer(r.saveVer);
             ClearSaveDirty();
+            ReapplyPendingGrants();                      // подарки не должны пропасть
         }
         RefreshAccount();
     }

@@ -18,6 +18,10 @@ public partial class MergeGame
 {
     const int MaxGrantedEnergy = 99;
 
+    // подарки, применённые на устройстве, но ещё не попавшие в облачное сохранение аккаунта:
+    // если сервер пришлёт более новое сохранение без них, они добавятся снова
+    int pendCoins, pendGems, pendEnergy;
+
     bool banned;
     string banReason = "";
     RectTransform banOverlay;
@@ -27,7 +31,35 @@ public partial class MergeGame
     {
         banned = PlayerPrefs.GetInt("net_banned", 0) == 1;
         banReason = PlayerPrefs.GetString("net_ban_reason", "");
+        var p = PlayerPrefs.GetString("grant_pending", "").Split(',');
+        if (p.Length == 3) { int.TryParse(p[0], out pendCoins); int.TryParse(p[1], out pendGems); int.TryParse(p[2], out pendEnergy); }
         ApplyBanUi();
+    }
+
+    void SavePending()
+    {
+        PlayerPrefs.SetString("grant_pending", pendCoins + "," + pendGems + "," + pendEnergy);
+    }
+
+    // сохранение аккаунта успешно ушло на сервер — подарки в нём уже учтены
+    void ClearPendingGrants()
+    {
+        if (pendCoins == 0 && pendGems == 0 && pendEnergy == 0) return;
+        pendCoins = pendGems = pendEnergy = 0;
+        SavePending();
+    }
+
+    // поверх нашего прогресса загрузили сохранение с сервера — вернуть неучтённые подарки
+    void ReapplyPendingGrants()
+    {
+        if (pendCoins == 0 && pendGems == 0 && pendEnergy == 0) return;
+        score = Mathf.Max(0, score + pendCoins);
+        gems = Mathf.Max(0, gems + pendGems);
+        energy = Mathf.Clamp(energy + pendEnergy, 0, MaxGrantedEnergy);
+        Debug.Log($"[HatchMerge] Подарки возвращены после загрузки сохранения: {pendCoins:+0;-0} монет, {pendGems:+0;-0} крист., {pendEnergy:+0;-0} энергии");
+        SaveLocal();
+        MarkSaveDirty();
+        RefreshTop();
     }
 
     // ---------- изменения ресурсов ----------
@@ -45,8 +77,10 @@ public partial class MergeGame
             coins += g.coins; gemsAdd += g.gems; energyAdd += g.energy;
         }
 
+        Debug.Log($"[HatchMerge] От сервера пришло изменений ресурсов: {grants.Length}, новых: {coins:+0;-0} монет, {gemsAdd:+0;-0} крист., {energyAdd:+0;-0} энергии");
         if (coins != 0 || gemsAdd != 0 || energyAdd != 0)
         {
+            if (HasAccount) { pendCoins += coins; pendGems += gemsAdd; pendEnergy += energyAdd; SavePending(); }
             score = Mathf.Max(0, score + coins);
             gems = Mathf.Max(0, gems + gemsAdd);
             energy = Mathf.Clamp(energy + energyAdd, 0, MaxGrantedEnergy);

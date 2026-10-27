@@ -87,6 +87,10 @@ public partial class MergeGame
                 lastStatus = -999f;
                 if (netState != NetState.Online) netKick = false;
             }
+            // у аккаунта сначала сверяем облачное сохранение — иначе загрузка с сервера
+            // перезапишет то, что успело измениться (например, подарок администратора)
+            if (netState == NetState.Online && HasAccount && !accLoaded) yield return SyncSave();
+
             // статус «в сети» — раз в 20 секунд или сразу по KickNet()
             if (netState == NetState.Online && (netKick || Time.unscaledTime - lastStatus >= Heartbeat))
             {
@@ -247,7 +251,9 @@ public partial class MergeGame
         {
             SetNetState(NetState.Online);
             if (banned) SetBanned(false, "");                       // блокировку сняли
-            if (resp != null && resp.grants != null && resp.grants.Length > 0) yield return ApplyGrants(resp.grants);
+            // подарки применяем, только когда сохранение аккаунта уже сверено (иначе — в следующий раз)
+            if (resp != null && resp.grants != null && resp.grants.Length > 0 && (!HasAccount || accLoaded))
+                yield return ApplyGrants(resp.grants);
             yield break;
         }
         if (result == 403 && resp != null && resp.error == "banned")
