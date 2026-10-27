@@ -85,9 +85,11 @@ public partial class MergeGame
         AddBtn(rc, ArmReset, 3);
         Label(setPanel, "Очки и животные сохраняются автоматически", 12, Muted, TextAnchor.MiddleCenter, 20, 352, 350, 20);
         BuildServerRow(setPanel, 392);
+        BuildAccountRow(setPanel, 466);
 
         BuildStartMenu();
         BuildPlayers();
+        BuildAccount();
 
         menuFx = TL(content, 0, 0, 390, 700, "MenuFX");
     }
@@ -141,6 +143,7 @@ public partial class MergeGame
         setPanel.gameObject.SetActive(tab == 3);
         startPanel.gameObject.SetActive(tab == TabStart);
         playersPanel.gameObject.SetActive(tab == TabPlayers);
+        accountPanel.gameObject.SetActive(tab == TabAccount);
 
         // в стартовом меню прячем нижнюю панель и счётчики сверху
         bool inMenu = tab == TabStart;
@@ -152,6 +155,7 @@ public partial class MergeGame
         if (tab == 1) RefreshZooPanel();
         if (tab == TabStart) RefreshStartMenu();
         if (tab == TabPlayers) OnPlayersOpened();
+        if (tab == TabAccount) RefreshAccount();
         for (int k = 0; k < NavTabs.Length; k++)
         {
             bool sel = NavTabs[k] == tab;
@@ -253,8 +257,21 @@ public partial class MergeGame
     }
 
     // ---------- Сохранение ----------
+    // Save — после любого изменения: локально и (если есть аккаунт) пометка «отправить на сервер»
     void Save()
     {
+        SaveLocal();
+        MarkSaveDirty();
+    }
+
+    void SaveLocal()
+    {
+        var g = new System.Text.StringBuilder(Cols * Rows);
+        for (int r = 0; r < Rows; r++)
+            for (int c = 0; c < Cols; c++)
+                g.Append(grid[c, r] != null ? (char)('0' + grid[c, r].level) : '0');
+        PlayerPrefs.SetString("eg_grid", g.ToString());
+        PlayerPrefs.SetInt("eg_energy", energy);
         PlayerPrefs.SetInt("eg_score", score);
         PlayerPrefs.SetInt("eg_gems", gems);
         PlayerPrefs.SetInt("eg_zoo", zooCount);

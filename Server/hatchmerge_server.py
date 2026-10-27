@@ -15,9 +15,15 @@ API (JSON):
   POST /api/register             {"nickA","nickB"}             -> {"ok", "id", "token"}
   POST /api/status               {"id","token", ...прогресс}   -> {"ok"}
   GET  /api/player/<ID>          -> {"ok","found", ...статус}
+  POST /api/account/register     {"id","token","email","password"} -> {"ok","email"}   привязать почту к игроку
+  POST /api/account/login        {"email","password"}          -> {"ok","id","token","email","save","saveVer",...}
+  POST /api/load                 {"id","token"}                -> {"ok","save","saveVer","email"}
+  POST /api/save                 {"id","token","save","baseVer"} -> {"ok","saveVer"}  (409 — на сервере новее)
   GET  /                         -> страница со списком игроков (для проверки в браузере)
 """
 
+import hashlib
+import hmac
 import html
 import json
 import os
@@ -47,7 +53,9 @@ DISCOVERY_PORT = 47777
 ONLINE_WINDOW = 70          # секунд без сообщений, после которых игрок считается «не в сети»
 NICK_A_COUNT = NICK_B_COUNT = 16
 ZOO_MAX = 8
-MAX_BODY = 4096
+MAX_BODY = 16384
+MAX_SAVE = 8192            # размер сохранения игры, байт
+PBKDF2_ROUNDS = 200_000
 DB_PATH = os.environ.get("HATCHMERGE_DB") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "hatchmerge.db")
 
 NICK_A = ["Весёлый", "Смелый", "Быстрый", "Хитрый", "Добрый", "Сонный", "Звёздный", "Солнечный",
@@ -77,6 +85,19 @@ _db.execute("""
         last_seen REAL    NOT NULL,
         created   REAL    NOT NULL
     )""")
+_db.execute("""
+    CREATE TABLE IF NOT EXISTS accounts (
+        email     TEXT PRIMARY KEY,
+        pass_hash TEXT NOT NULL,
+        player_id TEXT NOT NULL UNIQUE,
+        created   REAL NOT NULL
+    )""")
+# новые столбцы для облачного сохранения (база от прошлой версии обновляется сама)
+_cols = {r[1] for r in _db.execute("PRAGMA table_info(players)")}
+if "save" not in _cols:
+    _db.execute("ALTER TABLE players ADD COLUMN save TEXT NOT NULL DEFAULT ''")
+if "save_ver" not in _cols:
+    _db.execute("ALTER TABLE players ADD COLUMN save_ver INTEGER NOT NULL DEFAULT 0")
 _db.commit()
 
 
@@ -106,6 +127,42 @@ def player_json(row, now):
     }
 
 
+EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
+
+
+def norm_email(value):
+    email = str(value or "").strip().lower()
+    return email if len(email) <= 254 and EMAIL_RE.match(email) else None
+
+
+def hash_password(password, salt=None):
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ROUNDS)
+    return f"pbkdf2${PBKDF2_ROUNDS}${salt.hex()}${digest.hex()}"
+
+
+def check_password(password, stored):
+    try:
+        _, rounds, salt_hex, digest_hex = stored.split("$")
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), int(rounds))
+        return hmac.compare_digest(digest.hex(), digest_hex)
+    except (ValueError, TypeError):
+        return False
+
+
+DUMMY_HASH = hash_password("dummy-password")   # для входа с несуществующей почтой
+
+
+def valid_save(value):
+    """Сохранение — JSON-объект в виде строки, не больше MAX_SAVE байт."""
+    if not isinstance(value, str) or len(value.encode("utf-8")) > MAX_SAVE:
+        return None
+    try:
+        return value if isinstance(json.loads(value), dict) else None
+    except ValueError:
+        return None
+
+
 def nick(row):
     return f"{NICK_A[row['nick_a'] % len(NICK_A)]} {NICK_B[row['nick_b'] % len(NICK_B)]}"
 
@@ -131,6 +188,9 @@ class RateLimiter:
 
 
 register_limit = RateLimiter(20, 3600)    # регистраций с одного адреса в час
+login_ip_limit = RateLimiter(20, 600)     # попыток входа с одного адреса за 10 минут
+login_email_limit = RateLimiter(10, 900)  # попыток входа в одну учётную запись за 15 минут
+account_limit = RateLimiter(10, 3600)     # привязок почты с одного адреса в час
 lookup_limit = RateLimiter(60, 60)        # поисков с одного адреса в минуту
 
 # ---------------------------------------------------------------- HTTP
@@ -147,7 +207,8 @@ class Handler(BaseHTTPRequestHandler):
         return self.client_address[0]
 
     def log_message(self, fmt, *args):
-        if "/api/status" in self.path:     # пульс каждые 20 с — не засоряем консоль
+        if "/api/status" in self.path or "/api/save" in self.path or "/api/load" in self.path:
+            # пульс и автосохранение идут часто — не засоряем консоль
             return
         sys.stdout.write("%s  %s  %s\n" % (time.strftime("%H:%M:%S"), self.client_ip(), fmt % args))
 
@@ -169,6 +230,16 @@ class Handler(BaseHTTPRequestHandler):
             return obj if isinstance(obj, dict) else None
         except (ValueError, UnicodeDecodeError):
             return None
+
+    def auth_player(self, body):
+        """Проверить id и token из запроса. Возвращает (строку игрока, None) или (None, ответ с ошибкой)."""
+        pid, token = str(body.get("id", "")), str(body.get("token", ""))
+        row = _db.execute("SELECT * FROM players WHERE id=?", (pid,)).fetchone()
+        if row is None:
+            return None, (404, {"ok": False, "error": "unknown_player"})
+        if not secrets.compare_digest(row["token"], token):
+            return None, (403, {"ok": False, "error": "bad_token"})
+        return row, None
 
     # ---- GET
     def do_GET(self):
@@ -236,7 +307,81 @@ class Handler(BaseHTTPRequestHandler):
                 _db.commit()
             return self.send_json(200, {"ok": True})
 
+        if path == "/api/account/register":
+            return self.account_register(body)
+        if path == "/api/account/login":
+            return self.account_login(body)
+        if path == "/api/load":
+            with _db_lock:
+                row, err = self.auth_player(body)
+                if err:
+                    return self.send_json(*err)
+                acc = _db.execute("SELECT email FROM accounts WHERE player_id=?", (row["id"],)).fetchone()
+            return self.send_json(200, {"ok": True, "save": row["save"], "saveVer": row["save_ver"],
+                                        "email": acc["email"] if acc else ""})
+        if path == "/api/save":
+            save = valid_save(body.get("save"))
+            if save is None:
+                return self.send_json(400, {"ok": False, "error": "bad_save"})
+            base = clamp_int(body.get("baseVer"), 0, 2**62, -1)
+            with _db_lock:
+                row, err = self.auth_player(body)
+                if err:
+                    return self.send_json(*err)
+                if base != row["save_ver"]:
+                    # на сервере уже есть более новое сохранение (с другого устройства)
+                    return self.send_json(409, {"ok": False, "error": "conflict",
+                                                "save": row["save"], "saveVer": row["save_ver"]})
+                ver = row["save_ver"] + 1
+                _db.execute("UPDATE players SET save=?, save_ver=? WHERE id=?", (save, ver, row["id"]))
+                _db.commit()
+            return self.send_json(200, {"ok": True, "saveVer": ver})
+
         self.send_json(404, {"ok": False, "error": "not_found"})
+
+    # ---- учётные записи
+    def account_register(self, body):
+        if not account_limit.allow(self.client_ip()):
+            return self.send_json(429, {"ok": False, "error": "too_many_requests"})
+        email = norm_email(body.get("email"))
+        password = str(body.get("password", ""))
+        if email is None:
+            return self.send_json(400, {"ok": False, "error": "bad_email"})
+        if not 6 <= len(password) <= 128:
+            return self.send_json(400, {"ok": False, "error": "weak_password"})
+        pass_hash = hash_password(password)                 # медленно — вне блокировки базы
+        with _db_lock:
+            row, err = self.auth_player(body)
+            if err:
+                return self.send_json(*err)
+            if _db.execute("SELECT 1 FROM accounts WHERE player_id=?", (row["id"],)).fetchone():
+                return self.send_json(409, {"ok": False, "error": "already_linked"})
+            if _db.execute("SELECT 1 FROM accounts WHERE email=?", (email,)).fetchone():
+                return self.send_json(409, {"ok": False, "error": "email_taken"})
+            _db.execute("INSERT INTO accounts (email, pass_hash, player_id, created) VALUES (?,?,?,?)",
+                        (email, pass_hash, row["id"], time.time()))
+            _db.commit()
+        print(f"{time.strftime('%H:%M:%S')}  учётная запись для ID {row['id']}")
+        return self.send_json(200, {"ok": True, "email": email})
+
+    def account_login(self, body):
+        email = norm_email(body.get("email"))
+        password = str(body.get("password", ""))
+        if not login_ip_limit.allow(self.client_ip()) or (email and not login_email_limit.allow(email)):
+            return self.send_json(429, {"ok": False, "error": "too_many_requests"})
+        with _db_lock:
+            acc = _db.execute("SELECT * FROM accounts WHERE email=?", (email,)).fetchone() if email else None
+        # проверяем пароль даже для несуществующей почты, чтобы по времени ответа нельзя было угадать почты
+        ok = check_password(password, acc["pass_hash"] if acc else DUMMY_HASH)
+        if not acc or not ok:
+            return self.send_json(401, {"ok": False, "error": "bad_login"})
+        with _db_lock:
+            row = _db.execute("SELECT * FROM players WHERE id=?", (acc["player_id"],)).fetchone()
+        if row is None:
+            return self.send_json(401, {"ok": False, "error": "bad_login"})
+        return self.send_json(200, {"ok": True, "id": row["id"], "token": row["token"], "email": email,
+                                    "nickA": row["nick_a"], "nickB": row["nick_b"],
+                                    "save": row["save"], "saveVer": row["save_ver"]})
 
     # ---- страница для проверки в браузере
     def send_page(self):

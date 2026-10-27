@@ -67,6 +67,7 @@ public partial class MergeGame
             PlayerPrefs.SetInt("net_nickB", nickB);
         }
         netUrl = PlayerPrefs.GetString("net_url", "");
+        InitAccount();
         netStarted = true;
         RefreshNetUi();
         StartCoroutine(NetLoop());
@@ -76,14 +77,27 @@ public partial class MergeGame
 
     IEnumerator NetLoop()
     {
+        float lastStatus = -999f;
         while (true)
         {
-            if (netState != NetState.Online) yield return Connect();
-            if (netState == NetState.Online) yield return SendStatus(true);
+            if (netState != NetState.Online)
+            {
+                yield return Connect();
+                lastStatus = -999f;
+                if (netState != NetState.Online) netKick = false;
+            }
+            // статус «в сети» — раз в 20 секунд или сразу по KickNet()
+            if (netState == NetState.Online && (netKick || Time.unscaledTime - lastStatus >= Heartbeat))
+            {
+                netKick = false;
+                lastStatus = Time.unscaledTime;
+                yield return SendStatus(true);
+            }
+            // облачное сохранение — проверяется каждые 3 секунды
+            if (netState == NetState.Online && HasAccount) yield return SyncSave();
 
-            float wait = netState == NetState.Online ? Heartbeat : RetryDelay, t = 0f;
+            float wait = netState == NetState.Online ? 3f : RetryDelay, t = 0f;
             while (t < wait && !netKick) { t += Time.unscaledDeltaTime; yield return null; }
-            netKick = false;
         }
     }
 
@@ -233,6 +247,7 @@ public partial class MergeGame
             netId = netToken = "";
             PlayerPrefs.DeleteKey("net_id");
             PlayerPrefs.DeleteKey("net_token");
+            ForgetAccountLocal();
             SetNetState(NetState.Connecting);
             netKick = true;
             yield break;
@@ -244,6 +259,7 @@ public partial class MergeGame
     void NetGoodbye()
     {
         if (!netStarted || netState != NetState.Online || string.IsNullOrEmpty(netId)) return;
+        AccountGoodbye();
         try
         {
             var req = MakeRequest("POST", netUrl + "/api/status", JsonUtility.ToJson(MyStatus(false)), 2);
@@ -325,6 +341,7 @@ public partial class MergeGame
     {
         if (tab == TabStart) RefreshStartNet();
         if (tab == TabPlayers) RefreshMyCard();
+        RefreshAccount();
         if (serverTxt != null)
         {
             string addr = string.IsNullOrEmpty(netUrl) ? "не найден" : netUrl.Replace("http://", "");

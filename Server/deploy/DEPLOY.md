@@ -75,7 +75,7 @@ ssh root@IP "chown hatchmerge:hatchmerge /var/lib/hatchmerge/hatchmerge.db && sy
 
 | Задача | Как |
 |---|---|
-| Обновить код сервера | снова запустить `deploy_to_vps.bat` (данные игроков сохранятся) |
+| Обновить код сервера | снова запустить `deploy_to_vps.bat` (данные игроков сохранятся, база обновится сама) |
 | Журнал сервера | `ssh root@IP` → `journalctl -u hatchmerge -f` |
 | Перезапустить | `systemctl restart hatchmerge` |
 | Резервные копии | `/var/backups/hatchmerge`, каждый день в 03:30, хранятся 14 дней |

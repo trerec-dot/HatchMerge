@@ -78,13 +78,14 @@ public partial class MergeGame : MonoBehaviour
         score = PlayerPrefs.GetInt("eg_score", 0);
         gems = PlayerPrefs.GetInt("eg_gems", 0);
         zooCount = Mathf.Clamp(PlayerPrefs.GetInt("eg_zoo", 0), 0, Zoo.Length);
+        energy = Mathf.Clamp(PlayerPrefs.GetInt("eg_energy", MaxEnergy), 0, MaxEnergy);
         bool mOn = PlayerPrefs.GetInt("eg_music", 1) == 1;
         bool sOn = PlayerPrefs.GetInt("eg_sfx", 1) == 1;
         SetupCamera();
         GameAudio.Init(gameObject, mOn, sOn);
         BuildUI();
         BuildMenu();
-        Seed();
+        if (!LoadGrid()) Seed();
         RefreshAll();
         tab = TabStart;                // игра начинается со стартового меню
         InitNet();
@@ -107,6 +108,20 @@ public partial class MergeGame : MonoBehaviour
         var e = Egg.Make(eggLayer, CellCenter(c, r), level, 1f);
         grid[c, r] = e;
         return e;
+    }
+
+    // яйца на поле, сохранённые в прошлый раз (строка из 25 цифр — уровни по строкам)
+    bool LoadGrid()
+    {
+        string g = PlayerPrefs.GetString("eg_grid", "");
+        if (g.Length != Cols * Rows) return false;
+        bool any = false;
+        for (int i = 0; i < g.Length; i++)
+        {
+            int l = g[i] - '0';
+            if (l >= 1 && l <= MaxLevel) { Spawn(i % Cols, i / Cols, l); any = true; }
+        }
+        return any;
     }
 
     void Seed()
@@ -224,6 +239,7 @@ public partial class MergeGame : MonoBehaviour
 
         if (BackPressed() && tab != TabStart) SetTab(TabStart);
         UpdatePlayers(dt);
+        UpdateAccount(dt);
 
         // восстановление энергии
         if (energy < MaxEnergy)

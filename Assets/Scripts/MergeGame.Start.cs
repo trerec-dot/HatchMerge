@@ -12,7 +12,7 @@ public partial class MergeGame
     const int TabStart = 4, TabPlayers = 5;
 
     RectTransform startPanel, startAvatar;
-    Text startPlayTxt, startNickTxt, startIdTxt;
+    Text startPlayTxt, startNickTxt, startIdTxt, startAccTxt;
     Image startDot;
 
     void BuildStartMenu()
@@ -31,9 +31,14 @@ public partial class MergeGame
         var me = TL(startPanel, 20, 256, 350, 72, "PlayerCard");
         Round(me, Color.white, 24);
         startAvatar = TL(me, 0, 0, 72, 72, "Avatar");
-        startNickTxt = Label(me, "", 16, Ink, TextAnchor.MiddleLeft, 74, 12, 260, 26);
+        startNickTxt = Label(me, "", 16, Ink, TextAnchor.MiddleLeft, 74, 12, 190, 26);
         startDot = AddImg(TL(me, 74, 45, 10, 10, "Dot"), circleSpr, Muted);
-        startIdTxt = Label(me, "", 13, Muted, TextAnchor.MiddleLeft, 90, 38, 250, 24);
+        startIdTxt = Label(me, "", 13, Muted, TextAnchor.MiddleLeft, 90, 38, 174, 24);
+        // карточка игрока открывает экран аккаунта
+        var acc = TL(me, 262, 18, 76, 36, "Account");
+        Round(acc, C(238, 227, 247), 18);
+        startAccTxt = Label(acc, "", 13, Ink, TextAnchor.MiddleCenter, 0, 0, 76, 36);
+        AddBtn(me, () => SetTab(TabAccount), TabStart);
 
         // кнопки
         var play = TL(startPanel, 20, 348, 350, 66, "Play");
@@ -65,6 +70,7 @@ public partial class MergeGame
         if (startPanel == null) return;
         startPlayTxt.text = (score > 0 || zooCount > 0) ? "Продолжить" : "Играть";
         startNickTxt.text = NickName(nickA, nickB);
+        startAccTxt.text = HasAccount ? "Аккаунт" : "Войти";
         DrawAvatar(startAvatar, zooCount - 1, 46f, new Vector2(38, 36));
         RefreshStartNet();
     }
