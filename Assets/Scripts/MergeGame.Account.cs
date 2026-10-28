@@ -740,7 +740,7 @@ public partial class MergeGame
     {
         var e = Event.current;
         if (e.type != EventType.KeyDown) return;
-        if (tab == TabPlayers) { if (PlayersKey(e)) e.Use(); return; }
+        if (tab == TabPlayers) { if (!friendsMode && PlayersKey(e)) e.Use(); return; }
         if (focused == null || tsk != null || tab != TabAccount) return;
 
         if ((e.control || e.command) && e.keyCode == KeyCode.V) FieldPaste();

@@ -145,6 +145,7 @@ public partial class MergeGame
         startPanel.gameObject.SetActive(tab == TabStart);
         playersPanel.gameObject.SetActive(tab == TabPlayers);
         accountPanel.gameObject.SetActive(tab == TabAccount);
+        profilePanel.gameObject.SetActive(tab == TabProfile);
 
         // в стартовом меню прячем нижнюю панель и счётчики сверху
         bool inMenu = tab == TabStart;
@@ -157,9 +158,10 @@ public partial class MergeGame
         if (tab == TabStart) RefreshStartMenu();
         if (tab == TabPlayers) OnPlayersOpened();
         if (tab == TabAccount) RefreshAccount();
+        if (tab == TabProfile) { profileT = 0f; RefreshProfile(); }
         for (int k = 0; k < NavTabs.Length; k++)
         {
-            bool sel = NavTabs[k] == tab;
+            bool sel = NavTabs[k] == tab || (tab == TabProfile && NavTabs[k] == TabPlayers);
             tabImg[k].color = sel ? Ink : Color.white;
             tabTxt[k].color = sel ? Color.white : Ink;
         }

@@ -90,6 +90,7 @@ public partial class MergeGame
 
         ShowFoundMsg("Введите ID игрока, чтобы увидеть его статус");
         RefreshSearchBox();
+        BuildFriendsUi();
     }
 
     void OnPlayersOpened()
@@ -99,6 +100,7 @@ public partial class MergeGame
         KickNet();                                   // обновить свой статус на сервере
         if (shownId != null) StartCoroutine(FetchPlayer(shownId, false));
         foundT = 0f;
+        OnFriendsOpened();
     }
 
     void RefreshMyCard()
@@ -178,6 +180,7 @@ public partial class MergeGame
         foundProg.text = "Уровень " + p.level + " · животных " + p.zoo + " из " + total;
         foundExtra.text = "Монеты " + Fmt(p.score) + " · кристаллы " + p.gems;
         DrawAvatar(foundAvatar, p.avatar, 52f, new Vector2(44, 62));
+        RefreshFoundFriendButton();
     }
 
     static string AgoText(int sec)

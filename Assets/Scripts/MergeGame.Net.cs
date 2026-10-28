@@ -34,9 +34,9 @@ class NetStatusReq
 [Serializable]
 class NetPlayer
 {
-    public bool ok, found, online;
+    public bool ok, found, online, mutual;
     public string id;
-    public int nickA, nickB, avatar, level, zoo, zooTotal, score, gems, bestEgg, lastSeenSec;
+    public int nickA, nickB, avatar, level, zoo, zooTotal, score, gems, bestEgg, lastSeenSec, sinceDays, friends;
 }
 
 public partial class MergeGame

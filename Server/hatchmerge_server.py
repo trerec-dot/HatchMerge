@@ -21,6 +21,9 @@ API (JSON):
   POST /api/save                 {"id","token","save","baseVer"} -> {"ok","saveVer"}  (409 — на сервере новее)
   POST /api/account/reset/request {"email"}                    -> {"ok"}   письмо с кодом (503 email_disabled — почта не настроена)
   POST /api/account/reset/confirm {"email","code","password"} -> как вход: {"ok","id","token",...}
+  POST /api/friends/list        {"id","token"}                -> {"ok","friends":[игрок + "mutual"]}
+  POST /api/friends/add         {"id","token","friend"}       -> {"ok"}
+  POST /api/friends/remove      {"id","token","friend"}       -> {"ok"}
   POST /api/grants/ack           {"id","token","ids":[...]}    -> {"ok"}   подарки администратора получены
   Ответ /api/status содержит "grants" — начисления/списания от администратора, ещё не полученные игрой.
   Заблокированный игрок получает 403 {"error":"banned","reason":...}.
@@ -77,7 +80,8 @@ ONLINE_WINDOW = 70          # секунд без сообщений, после
 NICK_A_COUNT = NICK_B_COUNT = 16
 ZOO_MAX = 8
 MAX_BODY = 16384
-MAX_SAVE = 8192            # размер сохранения игры, байт
+MAX_SAVE = 8192
+MAX_FRIENDS = 100            # размер сохранения игры, байт
 PBKDF2_ROUNDS = 200_000
 DB_PATH = os.environ.get("HATCHMERGE_DB") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "hatchmerge.db")
 
@@ -139,6 +143,14 @@ _db.execute("""
     )""")
 _db.execute("CREATE INDEX IF NOT EXISTS grants_player ON grants(player_id, applied_at)")
 _db.execute("""
+    CREATE TABLE IF NOT EXISTS friends (
+        player_id TEXT NOT NULL,
+        friend_id TEXT NOT NULL,
+        created   REAL NOT NULL,
+        PRIMARY KEY (player_id, friend_id)
+    )""")
+_db.execute("CREATE INDEX IF NOT EXISTS friends_back ON friends(friend_id)")
+_db.execute("""
     CREATE TABLE IF NOT EXISTS reset_codes (
         email     TEXT PRIMARY KEY,
         code_hash TEXT NOT NULL,
@@ -180,7 +192,14 @@ def player_json(row, now):
         "level": row["level"], "zoo": row["zoo"], "zooTotal": row["zoo_total"],
         "score": row["score"], "gems": row["gems"], "bestEgg": row["best_egg"],
         "online": online, "lastSeenSec": int(max(0, now - row["last_seen"])),
+        "sinceDays": int(max(0, now - row["created"]) // 86400),
     }
+
+
+def friends_count(pid):
+    """Сколько друзей у игрока (вызывать под _db_lock)."""
+    return _db.execute("""SELECT COUNT(*) FROM friends f JOIN players p ON p.id = f.friend_id
+                          WHERE f.player_id=? AND p.banned=0""", (pid,)).fetchone()[0]
 
 
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
@@ -271,7 +290,7 @@ button.ok{background:var(--on)}button.small{padding:4px 10px;font-size:13px}
 .grantf{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-items:end;margin-bottom:8px}
 .grantf label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
 .grantf input{min-width:0}.grantf .wide{grid-column:1/3}.grantf button{height:42px}
-.wrap2{overflow-x:auto}h3{margin:18px 0 10px}.card h3:first-child{margin-top:0}
+.wrap2{overflow-x:auto}.rows tr:hover td{background:var(--line);cursor:pointer}h3{margin:18px 0 10px}.card h3:first-child{margin-top:0}
 @media (max-width:600px){main{padding:12px}input{min-width:0;flex:1}.grantf{grid-template-columns:1fr 1fr}.grantf .wide{grid-column:1/-1}}
 """
 
@@ -439,9 +458,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(429, {"ok": False, "error": "too_many_requests"})
             with _db_lock:
                 row = _db.execute("SELECT * FROM players WHERE id=?", (m.group(1),)).fetchone()
+                cnt = friends_count(row["id"]) if row is not None else 0
             if row is None or row["banned"]:
                 return self.send_json(404, {"ok": True, "found": False})
-            return self.send_json(200, player_json(row, time.time()))
+            return self.send_json(200, {**player_json(row, time.time()), "friends": cnt})
 
         if path == "":
             return self.send_page()
@@ -508,6 +528,9 @@ class Handler(BaseHTTPRequestHandler):
                 grants = [dict(id=g["id"], coins=g["coins"], gems=g["gems"], energy=g["energy"]) for g in _db.execute(
                     "SELECT * FROM grants WHERE player_id=? AND applied_at IS NULL AND canceled=0 ORDER BY id", (pid,))]
             return self.send_json(200, {"ok": True, "grants": grants})
+
+        if path in ("/api/friends/list", "/api/friends/add", "/api/friends/remove"):
+            return self.friends_api(path.rsplit("/", 1)[1], body)
 
         if path == "/api/grants/ack":
             ids = [clamp_int(i, 0, 2**62, 0) for i in (body.get("ids") or [])[:100] if isinstance(i, (int, str))]
@@ -600,6 +623,40 @@ class Handler(BaseHTTPRequestHandler):
         if row["banned"]:
             return self.send_json(403, banned_json(row))
         return self.send_json(200, login_json(row, email))
+
+    def friends_api(self, action, body):
+        now = time.time()
+        with _db_lock:
+            row, err = self.auth_player(body)
+            if err:
+                return self.send_json(*err)
+            pid = row["id"]
+            if action in ("add", "remove"):
+                fid = str(body.get("friend", ""))
+                if not re.fullmatch(r"\d{6}", fid) or fid == pid:
+                    return self.send_json(400, {"ok": False, "error": "bad_friend"})
+                if action == "remove":
+                    _db.execute("DELETE FROM friends WHERE player_id=? AND friend_id=?", (pid, fid))
+                    _db.commit()
+                    return self.send_json(200, {"ok": True})
+                other = _db.execute("SELECT banned FROM players WHERE id=?", (fid,)).fetchone()
+                if other is None or other["banned"]:
+                    return self.send_json(404, {"ok": False, "error": "not_found"})
+                count = _db.execute("SELECT COUNT(*) FROM friends WHERE player_id=?", (pid,)).fetchone()[0]
+                if count >= MAX_FRIENDS:
+                    return self.send_json(409, {"ok": False, "error": "too_many_friends"})
+                _db.execute("INSERT OR IGNORE INTO friends (player_id, friend_id, created) VALUES (?,?,?)", (pid, fid, now))
+                _db.commit()
+                return self.send_json(200, {"ok": True})
+
+            # list: друзья игрока (заблокированные скрыты), сначала те, кто в сети
+            rows = _db.execute("""SELECT p.*, EXISTS(SELECT 1 FROM friends b WHERE b.player_id = p.id AND b.friend_id = ?)
+                                         AS mutual
+                                  FROM friends f JOIN players p ON p.id = f.friend_id
+                                  WHERE f.player_id = ? AND p.banned = 0 ORDER BY f.created DESC""", (pid, pid)).fetchall()
+            items = [{**player_json(r, now), "mutual": bool(r["mutual"])} for r in rows]
+        items.sort(key=lambda x: (not x["online"], x["lastSeenSec"]))
+        return self.send_json(200, {"ok": True, "friends": items})
 
     def reset_request(self, body):
         if not smtp_enabled():
@@ -773,7 +830,9 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
         now = time.time()
         q = parse_qs(self.path.partition("?")[2]).get("q", [""])[0].strip().lower()[:100]
         with _db_lock:
-            rows = _db.execute("""SELECT p.*, a.email FROM players p LEFT JOIN accounts a ON a.player_id = p.id
+            rows = _db.execute("""SELECT p.*, a.email,
+                                         (SELECT COUNT(*) FROM friends f WHERE f.player_id = p.id) AS nfriends
+                                  FROM players p LEFT JOIN accounts a ON a.player_id = p.id
                                   ORDER BY p.last_seen DESC""").fetchall()
         total, accounts = len(rows), sum(1 for r in rows if r["email"])
         banned = sum(1 for r in rows if r["banned"])
@@ -794,7 +853,7 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
                 f"<td>{html.escape(nick(r))}</td><td>{email}</td><td>{status}</td>"
                 f"<td class=n>{r['level']}</td><td class=n>{r['zoo']}/{r['zoo_total']}</td>"
                 f"<td class=n>{r['score']:,}</td><td class=n>{r['gems']}</td><td class=n>{r['best_egg']}</td>"
-                f"<td class=n>{r['save_ver'] or '—'}</td><td>{fmt_time(r['created'])}</td></tr>".replace(f"{r['score']:,}", f"{r['score']:,}".replace(",", " ")))
+                f"<td class=n>{r['nfriends'] or '—'}</td><td class=n>{r['save_ver'] or '—'}</td><td>{fmt_time(r['created'])}</td></tr>".replace(f"{r['score']:,}", f"{r['score']:,}".replace(",", " ")))
         more = f"<p class=muted>Показаны первые 500 из {len(rows)}</p>" if len(rows) > 500 else ""
         body = f"""<div class=stats>
 <div class=card><b>{total}</b>игроков</div><div class=card><b>{online}</b>сейчас в сети</div>
@@ -803,8 +862,8 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
 <form class=search><input name=q value="{html.escape(q)}" placeholder="Поиск: ID, почта или имя"><button>Найти</button>
 {'<a href="/admin">сбросить</a>' if q else ''}</form>
 <div class=wrap><table><tr><th>ID</th><th>Имя</th><th>Почта</th><th>Статус</th><th>Уровень</th><th>Животные</th>
-<th>Монеты</th><th>Кристаллы</th><th>Лучшее яйцо</th><th>Версия сохр.</th><th>Создан</th></tr>
-{''.join(lines) or '<tr><td colspan=11 class=muted>Никого не найдено</td></tr>'}</table></div>{more}
+<th>Монеты</th><th>Кристаллы</th><th>Лучшее яйцо</th><th>Друзей</th><th>Версия сохр.</th><th>Создан</th></tr>
+{''.join(lines) or '<tr><td colspan=12 class=muted>Никого не найдено</td></tr>'}</table></div>{more}
 <p class=muted>Страница обновляется сама каждые 20 секунд. Нажмите на строку, чтобы открыть игрока.</p>"""
         return self.send_html(200, admin_shell("Игроки", body, refresh=20))
 
@@ -860,8 +919,39 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
 <div class=cols><div class=card><h3>Игрок</h3><table class=kv>{info}</table></div>
 <div class=card><h3>Сохранение на сервере</h3><table class=kv>{save_html}</table>
 <h3>Зоопарк</h3><ul class=zoo>{zoo}</ul></div></div>
+{self.admin_friends(r['id'], now)}
 {self.admin_manage(r)}"""
         return self.send_html(200, admin_shell(f"Игрок {r['id']}", body))
+
+    def admin_friends(self, pid, now):
+        with _db_lock:
+            mine = _db.execute("""SELECT p.*, f.created AS added,
+                                         EXISTS(SELECT 1 FROM friends b WHERE b.player_id = p.id AND b.friend_id = ?) AS mutual
+                                  FROM friends f JOIN players p ON p.id = f.friend_id
+                                  WHERE f.player_id = ? ORDER BY f.created DESC""", (pid, pid)).fetchall()
+            back = _db.execute("""SELECT p.*, f.created AS added,
+                                         EXISTS(SELECT 1 FROM friends b WHERE b.player_id = ? AND b.friend_id = p.id) AS mutual
+                                  FROM friends f JOIN players p ON p.id = f.player_id
+                                  WHERE f.friend_id = ? ORDER BY f.created DESC""", (pid, pid)).fetchall()
+
+        def table(rows):
+            if not rows:
+                return "<p class=muted>Никого</p>"
+            out = []
+            for x in rows:
+                p = player_json(x, now)
+                st = ("<span class=ban>⛔ заблокирован</span>" if x["banned"] else
+                      "<span class=on>● в сети</span>" if p["online"] else f"<span class=off>● {ago(p['lastSeenSec'])}</span>")
+                mutual = "<span class=on>взаимно</span>" if x["mutual"] else "<span class=muted>нет</span>"
+                out.append(f"<tr onclick=\"location='/admin/player/{x['id']}'\"><td><b>{x['id']}</b></td>"
+                           f"<td>{html.escape(nick(x))}</td><td>{st}</td><td class=n>{x['level']}</td>"
+                           f"<td>{mutual}</td><td>{fmt_time(x['added'])}</td></tr>")
+            return ("<div class='wrap2 rows'><table><tr><th>ID</th><th>Имя</th><th>Статус</th><th>Уровень</th>"
+                    f"<th>Взаимно</th><th>Добавлен</th></tr>{''.join(out)}</table></div>")
+
+        return f"""<div class=cols style="margin-top:16px">
+<div class=card><h3>Друзья игрока ({len(mine)})</h3><p class=muted>Кого этот игрок добавил в друзья.</p>{table(mine)}</div>
+<div class=card><h3>Добавили его в друзья ({len(back)})</h3><p class=muted>Кто добавил этого игрока.</p>{table(back)}</div></div>"""
 
     def flash(self):
         msg = parse_qs(self.path.partition("?")[2]).get("msg", [""])[0][:200]
