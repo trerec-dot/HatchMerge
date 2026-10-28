@@ -236,7 +236,7 @@ public partial class MergeGame
     NetStatusReq MyStatus(bool online) => new NetStatusReq
     {
         id = netId, token = netToken, nickA = nickA, nickB = nickB,
-        avatar = zooCount - 1, level = zooCount + 1, zoo = zooCount, zooTotal = Zoo.Length,
+        avatar = MyAvatar(), level = zooCount + 1, zoo = zooCount, zooTotal = Zoo.Length,
         score = score, gems = gems, bestEgg = BestLevel(), online = online,
     };
 

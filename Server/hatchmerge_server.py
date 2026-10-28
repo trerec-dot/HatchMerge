@@ -521,8 +521,12 @@ class Handler(BaseHTTPRequestHandler):
                 sets, values = ["online=?", "last_seen=?"], [1 if body.get("online", True) else 0, time.time()]
                 for key, (col, lo, hi) in fields.items():
                     if key in body:                          # обновляем только присланные поля
+                        v = clamp_int(body[key], lo, hi, lo)
+                        if key == "avatar":                  # аватар — только яйцо или уже открытое животное
+                            zoo = clamp_int(body.get("zoo", row["zoo"]), 0, ZOO_MAX, 0)
+                            v = min(v, zoo - 1) if v >= 0 else -1
                         sets.append(col + "=?")
-                        values.append(clamp_int(body[key], lo, hi, lo))
+                        values.append(v)
                 _db.execute(f"UPDATE players SET {', '.join(sets)} WHERE id=?", (*values, pid))
                 _db.commit()
                 grants = [dict(id=g["id"], coins=g["coins"], gems=g["gems"], energy=g["energy"]) for g in _db.execute(

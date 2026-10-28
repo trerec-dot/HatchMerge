@@ -239,7 +239,8 @@ public partial class MergeGame : MonoBehaviour
             if (resetArm <= 0f) resetTxt.text = "Сбросить прогресс";
         }
 
-        if (BackPressed() && tab != TabStart) SetTab(tab == TabProfile ? TabPlayers : TabStart);
+        if (BackPressed() && tab != TabStart)
+            SetTab(tab == TabProfile ? TabPlayers : tab == TabAvatar ? avatarReturnTab : TabStart);
         UpdatePlayers(dt);
         UpdateAccount(dt);
         UpdateFriends(dt);

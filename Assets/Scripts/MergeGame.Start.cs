@@ -39,6 +39,8 @@ public partial class MergeGame
         Round(acc, C(238, 227, 247), 18);
         startAccTxt = Label(acc, "", 13, Ink, TextAnchor.MiddleCenter, 0, 0, 76, 36);
         AddBtn(me, () => SetTab(TabAccount), TabStart);
+        // нажатие на аватар — выбор аватара (проверяется раньше всей карточки)
+        btns.Insert(0, new Btn { rt = startAvatar, act = OpenAvatarPicker, tab = TabStart });
 
         // кнопки
         var play = TL(startPanel, 20, 348, 350, 66, "Play");
@@ -71,7 +73,7 @@ public partial class MergeGame
         startPlayTxt.text = (score > 0 || zooCount > 0) ? "Продолжить" : "Играть";
         startNickTxt.text = NickName(nickA, nickB);
         startAccTxt.text = HasAccount ? "Аккаунт" : "Войти";
-        DrawAvatar(startAvatar, zooCount - 1, 46f, new Vector2(38, 36));
+        DrawAvatar(startAvatar, MyAvatar(), 46f, new Vector2(38, 36));
         RefreshStartNet();
     }
 

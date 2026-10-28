@@ -45,10 +45,15 @@ public partial class MergeGame
         myIdTxt = Label(me, "", 14, Ink, TextAnchor.MiddleLeft, 80, 36, 170, 22);
         myDot = AddImg(TL(me, 80, 63, 9, 9, "Dot"), circleSpr, Muted);
         myNetTxt = Label(me, "", 12, Muted, TextAnchor.MiddleLeft, 94, 57, 160, 20);
-        var rn = TL(me, 252, 24, 86, 36, "Rename");
-        Round(rn, C(238, 227, 247), 18);
-        Label(rn, "Другое имя", 12, Ink, TextAnchor.MiddleCenter, 0, 0, 86, 36);
+        var rn = TL(me, 252, 10, 86, 30, "Rename");
+        Round(rn, C(238, 227, 247), 15);
+        Label(rn, "Другое имя", 12, Ink, TextAnchor.MiddleCenter, 0, 0, 86, 30);
         AddBtn(rn, NextNick, TabPlayers);
+        var av = TL(me, 252, 44, 86, 30, "AvatarBtn");
+        Round(av, C(238, 227, 247), 15);
+        Label(av, "Аватар", 12, Ink, TextAnchor.MiddleCenter, 0, 0, 86, 30);
+        AddBtn(av, OpenAvatarPicker, TabPlayers);
+        AddBtn(myAvatar, OpenAvatarPicker, TabPlayers);
 
         // --- поле ID и кнопка поиска ---
         var box = TL(playersPanel, 20, 222, 236, 52, "IdBox");
@@ -110,7 +115,7 @@ public partial class MergeGame
         myIdTxt.text = string.IsNullOrEmpty(netId) ? "ID: —" : "Мой ID: " + netId;
         myNetTxt.text = NetStateText();
         myDot.color = NetStateColor();
-        DrawAvatar(myAvatar, zooCount - 1, 48f, new Vector2(42, 42));
+        DrawAvatar(myAvatar, MyAvatar(), 48f, new Vector2(42, 42));
     }
 
     void RefreshSearchBox()

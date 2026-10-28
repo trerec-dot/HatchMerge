@@ -90,6 +90,7 @@ public partial class MergeGame
         BuildStartMenu();
         BuildPlayers();
         BuildAccount();
+        BuildAvatarPicker();
 
         menuFx = TL(content, 0, 0, 390, 700, "MenuFX");
         BuildBanScreen();              // поверх всего, включая нижнюю панель
@@ -146,6 +147,7 @@ public partial class MergeGame
         playersPanel.gameObject.SetActive(tab == TabPlayers);
         accountPanel.gameObject.SetActive(tab == TabAccount);
         profilePanel.gameObject.SetActive(tab == TabProfile);
+        avatarPanel.gameObject.SetActive(tab == TabAvatar);
 
         // в стартовом меню прячем нижнюю панель и счётчики сверху
         bool inMenu = tab == TabStart;
@@ -159,6 +161,7 @@ public partial class MergeGame
         if (tab == TabPlayers) OnPlayersOpened();
         if (tab == TabAccount) RefreshAccount();
         if (tab == TabProfile) { profileT = 0f; RefreshProfile(); }
+        if (tab == TabAvatar) RefreshAvatarPicker();
         for (int k = 0; k < NavTabs.Length; k++)
         {
             bool sel = NavTabs[k] == tab || (tab == TabProfile && NavTabs[k] == TabPlayers);
