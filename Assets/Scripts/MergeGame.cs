@@ -240,10 +240,11 @@ public partial class MergeGame : MonoBehaviour
         }
 
         if (BackPressed() && tab != TabStart)
-            SetTab(tab == TabProfile ? TabPlayers : tab == TabAvatar ? avatarReturnTab : TabStart);
+            SetTab(tab == TabProfile ? TabPlayers : tab == TabAvatar ? avatarReturnTab : tab == TabGallery ? 1 : TabStart);
         UpdatePlayers(dt);
         UpdateAccount(dt);
         UpdateFriends(dt);
+        UpdateGallery(dt);
 
         // восстановление энергии
         if (energy < MaxEnergy)
