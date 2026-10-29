@@ -166,6 +166,9 @@ _db.execute("""
         canceled   INTEGER NOT NULL DEFAULT 0
     )""")
 _db.execute("CREATE INDEX IF NOT EXISTS grants_player ON grants(player_id, applied_at)")
+if "zoo" not in [c[1] for c in _db.execute("PRAGMA table_info(grants)")]:
+    # сколько животных открыто после изменения; -1 — не менять
+    _db.execute("ALTER TABLE grants ADD COLUMN zoo INTEGER NOT NULL DEFAULT -1")
 _db.execute("""
     CREATE TABLE IF NOT EXISTS purchases (
         id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -681,7 +684,7 @@ class Handler(BaseHTTPRequestHandler):
                     values.append(fr if fr.startswith("fr_") and fr in owned_items(pid) else "")
                 _db.execute(f"UPDATE players SET {', '.join(sets)} WHERE id=?", (*values, pid))
                 _db.commit()
-                grants = [dict(id=g["id"], coins=g["coins"], gems=g["gems"], energy=g["energy"]) for g in _db.execute(
+                grants = [dict(id=g["id"], coins=g["coins"], gems=g["gems"], energy=g["energy"], zoo=g["zoo"]) for g in _db.execute(
                     "SELECT * FROM grants WHERE player_id=? AND applied_at IS NULL AND canceled=0 ORDER BY id", (pid,))]
             return self.send_json(200, {"ok": True, "grants": grants})
 
@@ -1348,7 +1351,8 @@ document.getElementById('up').onsubmit = function (e) {{
 
         g_rows = []
         for g in grants:
-            what = " ".join(x for x in (signed(g["coins"], "монет"), signed(g["gems"], "крист."), signed(g["energy"], "энерг.")) if x)
+            what = " ".join(x for x in (signed(g["coins"], "монет"), signed(g["gems"], "крист."), signed(g["energy"], "энерг."),
+                                        f"<span class=plus>животных: {g['zoo']}</span>" if g["zoo"] >= 0 else "") if x)
             if g["canceled"]:
                 st = "<span class=muted>отменено</span>"
             elif g["applied_at"]:
@@ -1367,12 +1371,13 @@ document.getElementById('up').onsubmit = function (e) {{
 
         return f"""<div class=cols style="margin-top:16px">
 <div class=card><h3>Ресурсы</h3>
-<p class=muted>Плюс — начислить, минус — списать. Игра применит изменение при следующей связи с сервером
+<p class=muted>Плюс — начислить, минус — списать. «Открыто животных» — сколько первых животных зоопарка будет открыто. Игра применит изменение при следующей связи с сервером
 (обычно до 20 секунд; если игрок не в сети — когда он вернётся). Ниже нуля ресурсы не опустятся.</p>
 <form method=post action="/admin/player/{pid}/grant" class=grantf>{hidden}
 <label>Монеты<input type=number name=coins value=0 min=-1000000 max=1000000></label>
 <label>Кристаллы<input type=number name=gems value=0 min=-10000 max=10000></label>
 <label>Энергия<input type=number name=energy value=0 min=-99 max=99></label>
+<label class=wide>Открыто животных (0–{ZOO_MAX}; пусто — не менять)<input type=number name=zoo min=0 max={ZOO_MAX} placeholder="сейчас {r['zoo']}"></label>
 <label class=wide>Комментарий (только для вас)<input name=note maxlength=100 placeholder="например: компенсация"></label>
 <button>Применить</button></form>
 <h3>История изменений</h3><div class=wrap2>{g_table}</div></div>
@@ -1428,13 +1433,15 @@ document.getElementById('up').onsubmit = function (e) {{
                 coins = clamp_int(form.get("coins"), -1_000_000, 1_000_000, 0)
                 gems = clamp_int(form.get("gems"), -10_000, 10_000, 0)
                 energy = clamp_int(form.get("energy"), -99, 99, 0)
+                zoo = clamp_int(form.get("zoo"), 0, ZOO_MAX, -1) if form.get("zoo", "").strip() else -1
                 note = form.get("note", "").strip()[:100]
-                if not (coins or gems or energy):
+                if not (coins or gems or energy) and zoo < 0:
                     msg = "Ничего не изменено: все значения равны нулю"
                 else:
-                    _db.execute("INSERT INTO grants (player_id, coins, gems, energy, note, created) VALUES (?,?,?,?,?,?)",
-                                (pid, coins, gems, energy, note, now))
+                    _db.execute("INSERT INTO grants (player_id, coins, gems, energy, zoo, note, created) VALUES (?,?,?,?,?,?,?)",
+                                (pid, coins, gems, energy, zoo, note, now))
                     admin_log(ip, pid, "Ресурсы", f"монеты {coins:+}, кристаллы {gems:+}, энергия {energy:+}"
+                                                  + (f", животных: {zoo}" if zoo >= 0 else "")
                                                   + (f" ({note})" if note else ""))
                     msg = "Изменение отправлено — игра применит его при следующей связи с сервером"
             elif action == "ban":

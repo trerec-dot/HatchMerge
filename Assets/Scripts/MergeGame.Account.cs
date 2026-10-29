@@ -187,6 +187,7 @@ public partial class MergeGame
     void ForgetAccountLocal()
     {
         pendCoins = pendGems = pendEnergy = 0;
+        pendZoo = -1;
         SavePending();
         accEmail = "";
         accLoaded = false;

@@ -1,5 +1,5 @@
 // Действия администратора, пришедшие с сервера:
-// • изменения ресурсов (монеты, кристаллы, энергия) — сервер присылает их в ответе на статус,
+// • изменения ресурсов (монеты, кристаллы, энергия, открытые животные) — сервер присылает их в ответе на статус,
 //   игра применяет, запоминает номера применённых (чтобы не применить дважды) и подтверждает серверу;
 // • блокировка — игра показывает экран «Игрок заблокирован» поверх всего и не даёт играть,
 //   пока администратор не снимет блокировку.
@@ -10,7 +10,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
-[Serializable] class NetGrant { public long id; public int coins, gems, energy; }
+[Serializable] class NetGrant { public long id; public int coins, gems, energy; public int zoo = -1; }   // zoo: сколько животных открыто, -1 — не менять
 [Serializable] class NetStatusResp { public bool ok; public string error, reason; public NetGrant[] grants; }
 [Serializable] class NetAckReq { public string id, token; public long[] ids; }
 
@@ -20,7 +20,7 @@ public partial class MergeGame
 
     // подарки, применённые на устройстве, но ещё не попавшие в облачное сохранение аккаунта:
     // если сервер пришлёт более новое сохранение без них, они добавятся снова
-    int pendCoins, pendGems, pendEnergy;
+    int pendCoins, pendGems, pendEnergy, pendZoo = -1;
 
     bool banned;
     string banReason = "";
@@ -32,27 +32,30 @@ public partial class MergeGame
         banned = PlayerPrefs.GetInt("net_banned", 0) == 1;
         banReason = PlayerPrefs.GetString("net_ban_reason", "");
         var p = PlayerPrefs.GetString("grant_pending", "").Split(',');
-        if (p.Length == 3) { int.TryParse(p[0], out pendCoins); int.TryParse(p[1], out pendGems); int.TryParse(p[2], out pendEnergy); }
+        if (p.Length >= 3) { int.TryParse(p[0], out pendCoins); int.TryParse(p[1], out pendGems); int.TryParse(p[2], out pendEnergy); }
+        if (p.Length >= 4 && !int.TryParse(p[3], out pendZoo)) pendZoo = -1;
         ApplyBanUi();
     }
 
     void SavePending()
     {
-        PlayerPrefs.SetString("grant_pending", pendCoins + "," + pendGems + "," + pendEnergy);
+        PlayerPrefs.SetString("grant_pending", pendCoins + "," + pendGems + "," + pendEnergy + "," + pendZoo);
     }
 
     // сохранение аккаунта успешно ушло на сервер — подарки в нём уже учтены
     void ClearPendingGrants()
     {
-        if (pendCoins == 0 && pendGems == 0 && pendEnergy == 0) return;
+        if (pendCoins == 0 && pendGems == 0 && pendEnergy == 0 && pendZoo < 0) return;
         pendCoins = pendGems = pendEnergy = 0;
+        pendZoo = -1;
         SavePending();
     }
 
     // поверх нашего прогресса загрузили сохранение с сервера — вернуть неучтённые подарки
     void ReapplyPendingGrants()
     {
-        if (pendCoins == 0 && pendGems == 0 && pendEnergy == 0) return;
+        if (pendCoins == 0 && pendGems == 0 && pendEnergy == 0 && pendZoo < 0) return;
+        if (pendZoo >= 0) SetZooCount(pendZoo);
         score = Mathf.Max(0, score + pendCoins);
         gems = Mathf.Max(0, gems + pendGems);
         energy = Mathf.Clamp(energy + pendEnergy, 0, MaxGrantedEnergy);
@@ -67,7 +70,7 @@ public partial class MergeGame
     {
         var done = LoadAppliedGrants();
         var ids = new List<long>();
-        int coins = 0, gemsAdd = 0, energyAdd = 0;
+        int coins = 0, gemsAdd = 0, energyAdd = 0, zooSet = -1;
         foreach (var g in grants)
         {
             if (g == null) continue;
@@ -75,12 +78,14 @@ public partial class MergeGame
             if (done.Contains(g.id)) continue;      // уже применено, но сервер не получил подтверждение
             done.Add(g.id);
             coins += g.coins; gemsAdd += g.gems; energyAdd += g.energy;
+            if (g.zoo >= 0) zooSet = g.zoo;                 // если их несколько — действует последнее
         }
 
         Debug.Log($"[HatchMerge] От сервера пришло изменений ресурсов: {grants.Length}, новых: {coins:+0;-0} монет, {gemsAdd:+0;-0} крист., {energyAdd:+0;-0} энергии");
-        if (coins != 0 || gemsAdd != 0 || energyAdd != 0)
+        if (coins != 0 || gemsAdd != 0 || energyAdd != 0 || zooSet >= 0)
         {
-            if (HasAccount) { pendCoins += coins; pendGems += gemsAdd; pendEnergy += energyAdd; SavePending(); }
+            if (HasAccount) { pendCoins += coins; pendGems += gemsAdd; pendEnergy += energyAdd; if (zooSet >= 0) pendZoo = zooSet; SavePending(); }
+            if (zooSet >= 0) SetZooCount(zooSet);
             score = Mathf.Max(0, score + coins);
             gems = Mathf.Max(0, gems + gemsAdd);
             energy = Mathf.Clamp(energy + energyAdd, 0, MaxGrantedEnergy);
@@ -89,7 +94,7 @@ public partial class MergeGame
             PlayerPrefs.Save();
             RefreshTop();
             if (tab == TabStart) RefreshStartMenu();
-            Toast(GrantText(coins, gemsAdd, energyAdd));
+            Toast(GrantText(coins, gemsAdd, energyAdd, zooSet));
             GameAudio.Buy();
         }
         else SaveAppliedGrants(done);
@@ -99,9 +104,20 @@ public partial class MergeGame
         yield return Http("POST", netUrl, "/api/grants/ack", JsonUtility.ToJson(ack), (c, t) => { });
     }
 
-    static string GrantText(int coins, int gemsAdd, int energyAdd)
+    // администратор задал, сколько животных открыто
+    void SetZooCount(int n)
+    {
+        zooCount = Mathf.Clamp(n, 0, Zoo.Length);
+        zooPage = -1;                                // зоопарк откроется на странице с последним животным
+        RefreshAll();
+        if (tab == 1) RefreshZooPanel();
+        RefreshMyCard();
+    }
+
+    static string GrantText(int coins, int gemsAdd, int energyAdd, int zooSet = -1)
     {
         var parts = new List<string>();
+        if (zooSet >= 0) parts.Add("животных открыто: " + zooSet);
         void Part(int v, string unit) { if (v != 0) parts.Add((v > 0 ? "+" : "−") + Mathf.Abs(v) + " " + unit); }
         Part(coins, "монет");
         Part(gemsAdd, "крист.");
