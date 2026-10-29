@@ -110,7 +110,13 @@ public partial class MergeGame
         var qc = TL(content, 20, 82, 350, 76, "Quest");
         Round(qc, Color.white, 24);
         questEgg = Egg.Make(qc, new Vector2(37, 38), 5, 0.9f, true);
-        questTitle = Label(qc, "", 16, Ink, TextAnchor.MiddleLeft, 72, 16, 200, 28);
+        questTitle = Label(qc, "", 16, Ink, TextAnchor.MiddleLeft, 72, 16, 168, 28);
+        // длинные имена животных уменьшаются, чтобы не наезжать на счётчик справа
+        questTitle.horizontalOverflow = HorizontalWrapMode.Wrap;
+        questTitle.verticalOverflow = VerticalWrapMode.Truncate;
+        questTitle.resizeTextForBestFit = true;
+        questTitle.resizeTextMinSize = 10;
+        questTitle.resizeTextMaxSize = 16;
         Round(TL(qc, 72, 49, 223, 10, "Track"), C(238, 227, 247), 5);
         questFill = TL(qc, 72, 49, 10, 10, "Fill");
         Round(questFill, C(154, 111, 224), 5);
