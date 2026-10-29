@@ -1,9 +1,6 @@
-// Магазин оформления: фоны, стили интерфейса и рамки для аватара за деньги.
+// Магазин оформления: фоны, стили интерфейса и рамки для аватара за монеты игры.
 // • «Магазин» → вкладка «Оформление». Купленное можно надеть; «Сбросить оформление» возвращает обычный вид.
-// • Перед покупкой — вопрос для взрослых (детская игра). Покупать можно только с аккаунтом:
-//   покупки хранятся на сервере и не пропадут при переустановке или на другом телефоне.
-// • Сейчас сервер работает в тестовом режиме: покупка проходит без списания денег. Когда подключите
-//   платёжный сервис, сервер вернёт ссылку на оплату (payUrl) — игра её откроет; код игры менять не нужно.
+// • Монеты списывает игра, а сервер запоминает покупку — с аккаунтом она будет и на другом телефоне.
 // • Рамку аватара видят друзья (она отправляется на сервер вместе со статусом).
 // Список товаров дублируется на сервере (SHOP_ITEMS в hatchmerge_server.py) — id и цены должны совпадать.
 
@@ -19,7 +16,7 @@ using UnityEngine.UI;
 class NetShopState
 {
     public bool ok, account, granted;
-    public string mode, error, payUrl;
+    public string mode, error;
     public string[] owned;
     public NetShopItem[] items;
 }
@@ -41,12 +38,12 @@ public partial class MergeGame
 
     static readonly CosItem[] CosItems =
     {
-        Cos("bg_stars", "Звёздное небо", CosKind.Background, 79, new Color32(208, 200, 248, 255), new Color32(250, 238, 255, 255)),
-        Cos("bg_meadow", "Мятный луг", CosKind.Background, 49, new Color32(212, 244, 228, 255), new Color32(244, 252, 236, 255)),
-        Cos("ui_ocean", "Океан", CosKind.Style, 49, new Color32(40, 130, 200, 255), Color.white),
-        Cos("ui_berry", "Ягодный", CosKind.Style, 49, new Color32(196, 56, 128, 255), Color.white),
-        Cos("fr_gold", "Золотая", CosKind.Frame, 29, new Color32(255, 196, 70, 255), new Color32(255, 236, 160, 255)),
-        Cos("fr_rainbow", "Радужная", CosKind.Frame, 49, Color.white, Color.white),
+        Cos("bg_stars", "Звёздное небо", CosKind.Background, 3000, new Color32(208, 200, 248, 255), new Color32(250, 238, 255, 255)),
+        Cos("bg_meadow", "Мятный луг", CosKind.Background, 2000, new Color32(212, 244, 228, 255), new Color32(244, 252, 236, 255)),
+        Cos("ui_ocean", "Океан", CosKind.Style, 2500, new Color32(40, 130, 200, 255), Color.white),
+        Cos("ui_berry", "Ягодный", CosKind.Style, 2500, new Color32(196, 56, 128, 255), Color.white),
+        Cos("fr_gold", "Золотая", CosKind.Frame, 1500, new Color32(255, 196, 70, 255), new Color32(255, 236, 160, 255)),
+        Cos("fr_rainbow", "Радужная", CosKind.Frame, 4000, Color.white, Color.white),
     };
 
     static readonly Color DefaultBg = new Color32(255, 243, 224, 255);
@@ -55,7 +52,6 @@ public partial class MergeGame
 
     readonly HashSet<string> cosOwned = new HashSet<string>();
     string cosBg = "", cosUi = "", cosFr = "";
-    string shopMode = "test";
     bool shopLoaded, shopBusy, cosMode;
     readonly List<Graphic> accentGraphics = new List<Graphic>();
 
@@ -65,14 +61,9 @@ public partial class MergeGame
     readonly Text[] shopModeTxt = new Text[2];
     readonly Image[] cosBtnImg = new Image[6];
     readonly Text[] cosBtnTxt = new Text[6];
+    readonly RectTransform[] cosCoin = new RectTransform[6];
     Text cosNote;
 
-    // вопрос для взрослых
-    RectTransform gateOverlay;
-    Text gateQuestion, gateWhat;
-    readonly Text[] gateAnsTxt = new Text[3];
-    int gateAnswer;
-    string gateItem;
 
     // ============================================================
     //  Запуск
@@ -248,6 +239,8 @@ public partial class MergeGame
             var btn = TL(card, 240, 13, 98, 36, "Buy");
             cosBtnImg[i] = Round(btn, Red, 18);
             cosBtnTxt[i] = Label(btn, "", 14, Color.white, TextAnchor.MiddleCenter, 0, 0, 98, 36);
+            cosCoin[i] = TL(btn, 0, 0, 98, 36, "CoinHold");
+            CoinIcon(cosCoin[i], -27, 0, 22);
             AddBtn(btn, () => CosButton(idx), 2);
         }
         var reset = TL(cosGroup, 95, 572, 200, 30, "Reset");
@@ -258,10 +251,9 @@ public partial class MergeGame
             SetCosmetic(CosKind.Background, ""); SetCosmetic(CosKind.Style, ""); SetCosmetic(CosKind.Frame, "");
             Toast("Обычное оформление");
         }, 2);
-        Label(cosGroup, "Покупки хранятся в аккаунте — они не пропадут на другом телефоне", 11, Muted,
+        Label(cosGroup, "С аккаунтом покупки будут и на другом телефоне", 11, Muted,
             TextAnchor.MiddleCenter, 20, 604, 350, 20);
 
-        BuildParentGate();
         ApplyCosMode();
     }
 
@@ -316,14 +308,16 @@ public partial class MergeGame
     void RefreshCosShop()
     {
         if (cosGroup == null) return;
-        cosNote.text = shopMode == "test" ? "Тестовый режим — деньги не списываются" : "Покупка за рубли";
+        cosNote.text = "Оформление за монеты · у вас " + Fmt(score);
         for (int i = 0; i < CosItems.Length; i++)
         {
             var it = CosItems[i];
             bool owned = cosOwned.Contains(it.id), on = Equipped(it.kind) == it.id;
-            cosBtnImg[i].color = on ? Ink : owned ? C(238, 227, 247) : Red;
+            bool afford = score >= it.price;
+            cosBtnImg[i].color = on ? Ink : owned ? C(238, 227, 247) : afford ? Red : C(216, 201, 190);
             cosBtnTxt[i].color = on || !owned ? Color.white : Ink;
-            cosBtnTxt[i].text = on ? "Выбрано" : owned ? "Выбрать" : it.price + " ₽";
+            cosBtnTxt[i].text = on ? "Выбрано" : owned ? "Выбрать" : "     " + Fmt(it.price);
+            cosCoin[i].gameObject.SetActive(!owned);
         }
     }
 
@@ -338,15 +332,9 @@ public partial class MergeGame
             return;
         }
         if (shopBusy) return;
-        if (!HasAccount)
-        {
-            GameAudio.Deny();
-            Toast("Покупки — только с аккаунтом");
-            SetTab(TabAccount);
-            return;
-        }
+        if (score < it.price) { GameAudio.Deny(); Toast("Не хватает монет: нужно " + Fmt(it.price)); return; }
         if (netState != NetState.Online) { GameAudio.Deny(); Toast("Нет связи с сервером"); KickNet(); return; }
-        OpenParentGate(it);
+        StartCoroutine(DoBuy(it.id));
     }
 
     void SetCosmetic(CosKind k, string id)
@@ -368,7 +356,6 @@ public partial class MergeGame
         yield return Http("POST", netUrl, "/api/shop/state", JsonUtility.ToJson(new NetAuthReq { id = netId, token = netToken }),
             (c, t) => { if (c == 200) r = Parse<NetShopState>(t); });
         if (r == null || !r.ok) yield break;
-        shopMode = string.IsNullOrEmpty(r.mode) ? "test" : r.mode;
         SetOwned(r.owned);
         shopLoaded = true;
     }
@@ -398,88 +385,19 @@ public partial class MergeGame
 
         if (code == 200 && r != null && r.ok && r.granted)
         {
-            SetOwned(r.owned);
             int k = CosIndex(item);
-            if (k >= 0) SetCosmetic(CosItems[k].kind, item);         // сразу надеть
+            bool already = cosOwned.Contains(item);
+            if (k >= 0 && !already) score = Mathf.Max(0, score - CosItems[k].price);   // списываем монеты
+            SetOwned(r.owned);
+            if (k >= 0) SetCosmetic(CosItems[k].kind, item);         // сразу надеть (там же — сохранение)
+            RefreshTop();
             GameAudio.Hatch();
             Toast("Куплено!");
-        }
-        else if (code == 200 && r != null && !string.IsNullOrEmpty(r.payUrl))
-        {
-            Application.OpenURL(r.payUrl);                          // оплата в браузере (когда подключат платёжный сервис)
-            Toast("Завершите оплату в браузере");
         }
         else
         {
             GameAudio.Deny();
-            string err = r != null ? r.error : null;
-            Toast(err == "need_account" ? "Покупки — только с аккаунтом"
-                : err == "payments_off" ? "Покупки пока недоступны"
-                : code == 0 ? "Нет связи с сервером" : "Не получилось, попробуйте ещё раз");
+            Toast(code == 0 ? "Нет связи с сервером" : "Не получилось, попробуйте ещё раз");
         }
-    }
-
-    // ============================================================
-    //  Вопрос для взрослых
-    // ============================================================
-    void BuildParentGate()
-    {
-        gateOverlay = NewRt("ParentGate", canvasRt);
-        gateOverlay.anchorMin = Vector2.zero;
-        gateOverlay.anchorMax = Vector2.one;
-        gateOverlay.offsetMin = gateOverlay.offsetMax = Vector2.zero;
-        AddImg(gateOverlay, null, new Color(0.23f, 0.16f, 0.29f, 0.55f));
-
-        var box = CC(gateOverlay, 0, 10, 330, 380, "Box");
-        Round(box, Color.white, 28);
-        Label(box, "Вопрос для взрослых", 20, Ink, TextAnchor.MiddleCenter, 0, 22, 330, 30);
-        gateWhat = WrapLabel(box, "", 14, Muted, TextAnchor.UpperCenter, 20, 56, 290, 44);
-        gateQuestion = Label(box, "", 30, Ink, TextAnchor.MiddleCenter, 0, 104, 330, 48);
-
-        var list = new List<Btn>();
-        for (int i = 0; i < 3; i++)
-        {
-            int n = i;
-            var b = TL(box, 20 + i * 100, 168, 90, 60, "Answer");
-            Round(b, C(238, 227, 247), 22);
-            gateAnsTxt[i] = Label(b, "", 22, Ink, TextAnchor.MiddleCenter, 0, 0, 90, 60);
-            list.Add(new Btn { rt = b, act = () => GateAnswer(n), tab = -1 });
-        }
-        var cancel = TL(box, 20, 244, 290, 48, "Cancel");
-        Label(cancel, "Отмена", 16, Muted, TextAnchor.MiddleCenter, 0, 0, 290, 48);
-        list.Add(new Btn { rt = cancel, act = () => { GameAudio.Click(); gateOverlay.gameObject.SetActive(false); }, tab = -1 });
-        WrapLabel(box, "Покупку должен подтвердить взрослый", 12, Muted, TextAnchor.UpperCenter, 20, 300, 290, 40);
-        list.Add(new Btn { rt = gateOverlay, act = () => { }, tab = -1 });     // заглушка: под окном ничего не нажимается
-        btns.InsertRange(0, list);
-        gateOverlay.gameObject.SetActive(false);
-    }
-
-    void OpenParentGate(CosItem it)
-    {
-        gateItem = it.id;
-        int a = UnityEngine.Random.Range(6, 10), b = UnityEngine.Random.Range(6, 10);
-        gateAnswer = a * b;
-        gateQuestion.text = a + " × " + b + " = ?";
-        gateWhat.text = KindName[(int)it.kind] + " «" + it.title + "» за " + it.price + " ₽" + (shopMode == "test" ? " (тест, без оплаты)" : "");
-        int correct = UnityEngine.Random.Range(0, 3);
-        var used = new HashSet<int> { gateAnswer };
-        for (int i = 0; i < 3; i++)
-        {
-            int v = gateAnswer;
-            if (i != correct)
-                do v = gateAnswer + UnityEngine.Random.Range(-12, 13); while (v <= 0 || used.Contains(v));
-            used.Add(v);
-            gateAnsTxt[i].text = v.ToString();
-        }
-        gateOverlay.SetAsLastSibling();
-        gateOverlay.gameObject.SetActive(true);
-        GameAudio.Click();
-    }
-
-    void GateAnswer(int i)
-    {
-        gateOverlay.gameObject.SetActive(false);
-        if (gateAnsTxt[i].text != gateAnswer.ToString()) { GameAudio.Deny(); Toast("Неверный ответ"); return; }
-        StartCoroutine(DoBuy(gateItem));
     }
 }

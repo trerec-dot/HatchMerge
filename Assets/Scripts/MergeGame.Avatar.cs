@@ -16,7 +16,11 @@ public partial class MergeGame
     int avatarReturnTab = TabStart;
 
     RectTransform avatarPanel;
-    const int AvatarCells = 13;          // яйцо + 12 животных
+    const int AvatarCells = 12;          // ячеек на странице; варианты: яйцо + все животные
+    static int AvatarPages => (Zoo.Length + 1 + AvatarCells - 1) / AvatarCells;
+    int avPage;
+    Text avPageTxt;
+    int AvOpt(int cell) => avPage * AvatarCells + cell - 1;      // -1 — яйцо, 0.. — животные
     readonly RectTransform[] avCells = new RectTransform[AvatarCells];
     readonly RectTransform[] avHolders = new RectTransform[AvatarCells];
     readonly Image[] avBg = new Image[AvatarCells];
@@ -46,14 +50,24 @@ public partial class MergeGame
 
         for (int i = 0; i < AvatarCells; i++)
         {
-            int opt = i - 1;                      // -1 — яйцо, 0..11 — животные
+            int c = i;
             float x = 20 + (i % 4) * 89, y = 190 + (i / 4) * 92;
             var cell = TL(avatarPanel, x, y, 83, 86, "Avatar");
             avBg[i] = Round(cell, Color.white, 18);
             avHolders[i] = TL(cell, 0, 0, 83, 58, "Pic");
             avName[i] = WrapLabel(cell, "", 9, Ink, TextAnchor.UpperCenter, 2, 58, 79, 28);
             avCells[i] = cell;
-            AddBtn(cell, () => ChooseAvatar(opt), TabAvatar);
+            AddBtn(cell, () => { int opt = AvOpt(c); if (opt < Zoo.Length) ChooseAvatar(opt); }, TabAvatar);
+        }
+
+        avPageTxt = Label(avatarPanel, "", 14, Muted, TextAnchor.MiddleCenter, 145, 470, 100, 44);
+        for (int d = -1; d <= 1; d += 2)
+        {
+            int dir = d;
+            var arrow = TL(avatarPanel, d < 0 ? 85 : 251, 470, 54, 44, "Page");
+            Round(arrow, Color.white, 22);
+            Label(arrow, d < 0 ? "‹" : "›", 26, Ink, TextAnchor.MiddleCenter, 0, -2, 54, 44);
+            AddBtn(arrow, () => { GameAudio.Click(); avPage = (avPage + dir + AvatarPages) % AvatarPages; RefreshAvatarPicker(); }, TabAvatar);
         }
 
         var auto = TL(avatarPanel, 20, 562, 350, 44, "Auto");
@@ -68,6 +82,7 @@ public partial class MergeGame
         if (tab == TabAvatar) return;
         avatarReturnTab = tab;
         avMsg.text = "";
+        avPage = (Mathf.Max(MyAvatar(), AvatarEgg) + 1) / AvatarCells;     // страница с текущим аватаром
         GameAudio.Click();
         SetTab(TabAvatar);
     }
@@ -76,9 +91,13 @@ public partial class MergeGame
     {
         if (avatarPanel == null) return;
         int current = MyAvatar();
+        avPage = Mathf.Clamp(avPage, 0, AvatarPages - 1);
+        avPageTxt.text = (avPage + 1) + " / " + AvatarPages;
         for (int i = 0; i < AvatarCells; i++)
         {
-            int opt = i - 1;
+            int opt = AvOpt(i);
+            avCells[i].gameObject.SetActive(opt < Zoo.Length);
+            if (opt >= Zoo.Length) continue;
             bool open = opt == AvatarEgg || opt < zooCount;
             bool sel = avatarSel != AvatarAuto && opt == current;
             avBg[i].color = sel ? C(244, 236, 252) : open ? Color.white : C(247, 240, 232);

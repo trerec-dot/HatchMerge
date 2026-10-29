@@ -125,6 +125,151 @@ CREATURES = [
 ]
 NAVY, CHAR, FLAME_R, FLAME_Y = (74, 86, 130), (66, 58, 80), (235, 85, 70), (255, 205, 90)
 
+# 30 дополнительных зверюшек: собираются из «черт» (см. creatures_extra.py)
+import sys as _sys
+_sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from creatures_extra import EXTRA
+for _name, _col, _egg, _feats in EXTRA:
+    CREATURES.append(("feat:" + _feats, _col))
+
+
+def line_mask(n, pts, w):
+    m = Image.new("L", (n, n), 0)
+    ImageDraw.Draw(m).line(pts, fill=255, width=max(1, int(w)), joint="curve")
+    return m
+
+
+def draw_back_features(f, n, cx, cy, R, body, dark, light, back):
+    """Черты позади тела: ушки, рожки, хвосты, крылья, панцири…"""
+    pink = (245, 160, 185)
+    E = lambda x, y, rx, ry: shape_mask(n, ell(cx + x * R, cy + y * R, rx * R, ry * R))
+    RE = lambda x, y, rx, ry, d: rotated_ellipse_mask(n, cx + x * R, cy + y * R, rx * R, ry * R, d)
+    P = lambda pts: shape_mask(n, poly([(cx + x * R, cy + y * R) for x, y in pts]))
+    for s in (-1, 1):
+        if "ears_round" in f:
+            back += [(E(s * 0.64, -0.72, 0.3, 0.3), dark), (E(s * 0.64, -0.72, 0.16, 0.16), light)]
+        if "ears_mouse" in f:
+            back += [(E(s * 0.72, -0.7, 0.44, 0.44), body), (E(s * 0.72, -0.7, 0.28, 0.28), pink)]
+        if "ears_big" in f:
+            back += [(E(s * 0.98, -0.3, 0.5, 0.5), body), (E(s * 1.02, -0.3, 0.32, 0.32), light)]
+        if "ears_pointy" in f or "ears_tuft" in f:
+            back += [(P([(s * 0.25, -0.85), (s * 0.78, -1.3), (s * 0.92, -0.35)]), body),
+                     (P([(s * 0.38, -0.8), (s * 0.74, -1.1), (s * 0.82, -0.5)]), pink if "ears_pointy" in f else light)]
+            if "ears_tuft" in f:
+                back.append((line_mask(n, [(cx + s * 0.78 * R, cy - 1.3 * R), (cx + s * 0.86 * R, cy - 1.55 * R)], 0.07 * R), dark))
+        if "ears_long" in f:
+            back += [(RE(s * 0.42, -1.05, 0.2, 0.52, -s * 10), body), (RE(s * 0.42, -1.02, 0.1, 0.36, -s * 10), light)]
+        if "ears_floppy" in f:
+            back.append((RE(s * 0.92, -0.05, 0.22, 0.5, -s * 25), dark))
+        if "antlers" in f:
+            br = (150, 100, 60)
+            base = (cx + s * 0.32 * R, cy - 0.78 * R)
+            top = (cx + s * 0.55 * R, cy - 1.45 * R)
+            back.append((line_mask(n, [base, top], 0.09 * R), br))
+            back.append((line_mask(n, [(cx + s * 0.42 * R, cy - 1.08 * R), (cx + s * 0.8 * R, cy - 1.3 * R)], 0.08 * R), br))
+            back.append((line_mask(n, [(cx + s * 0.5 * R, cy - 1.3 * R), (cx + s * 0.32 * R, cy - 1.55 * R)], 0.07 * R), br))
+        if "antenna" in f:
+            tip = (cx + s * 0.48 * R, cy - 1.38 * R)
+            back.append((line_mask(n, [(cx + s * 0.22 * R, cy - 0.82 * R), tip], 0.06 * R), mix(body, INK, 0.6)))
+            back.append((shape_mask(n, ell(tip[0], tip[1], 0.1 * R, 0.1 * R)), mix(body, INK, 0.6)))
+        if "eyebumps" in f:
+            back.append((E(s * 0.4, -0.7, 0.32, 0.3), body))
+        if "claws" in f:
+            back += [(E(s * 1.05, -0.55, 0.32, 0.3), body), (P([(s * 1.05, -0.62), (s * 1.38, -0.86), (s * 1.3, -0.5)]), light)]
+        if "wings_small" in f:
+            back.append((RE(s * 0.98, -0.25, 0.2, 0.42, s * 40), light))
+        if "wings_bat" in f:
+            back.append((P([(s * 0.8, -0.4), (s * 1.55, -0.95), (s * 1.42, -0.2), (s * 1.6, 0.15), (s * 1.12, 0.05), (s * 0.85, 0.3)]), dark))
+        if "flippers" in f:
+            back.append((RE(s * 0.95, 0.45, 0.18, 0.36, s * 50), dark))
+    if "tentacles" in f:
+        for i, dx in enumerate((-0.55, -0.18, 0.18, 0.55)):
+            pts = [(cx + dx * R + math.sin(t / 39 * 7 + i) * 0.09 * R, cy + 0.55 * R + t / 39 * 0.75 * R) for t in range(40)]
+            back.append((line_mask(n, pts, 0.16 * R), dark))
+    if "shell" in f:
+        back.append((E(0, -0.16, 1.14, 1.04), mix(body, (60, 110, 60), 0.55)))
+        for (x, y) in [(-0.6, -0.75), (0, -1.0), (0.6, -0.75), (-0.95, -0.15), (0.95, -0.15)]:
+            back.append((E(x, y, 0.13, 0.11), mix(body, (255, 255, 230), 0.4)))
+    if "shell_spiral" in f:
+        sc = (205, 140, 115)
+        back.append((E(0.62, -0.5, 0.66, 0.66), sc))
+        pts = [(cx + (0.62 + math.cos(a) * r) * R, cy + (-0.5 + math.sin(a) * r) * R)
+               for k in range(60) for a, r in [(k / 59 * 10.5, 0.55 * (1 - k / 66))]]
+        back.append((line_mask(n, pts, 0.06 * R), mix(sc, INK, 0.35)))
+    if "tail_big" in f:
+        back += [(RE(1.0, -0.35, 0.46, 0.86, -20), body), (RE(1.08, -0.6, 0.26, 0.42, -20), light)]
+    if "tail_striped" in f:
+        back.append((RE(0.98, 0.25, 0.22, 0.62, -40), body))
+        for k in range(2):
+            back.append((RE(1.0 + k * 0.22, 0.08 - k * 0.18, 0.18, 0.08, -40), dark))
+    if "tail_fluke" in f:
+        back += [(RE(0.95, -0.85, 0.16, 0.38, 50), body), (RE(1.25, -0.82, 0.16, 0.38, -40), body)]
+    if "spikes" in f:
+        for k in range(7):
+            a = math.radians(-160 + k * 23)
+            bx, by = math.cos(a) * 0.86, math.sin(a) * 0.84
+            tx, ty = math.cos(a) * 1.22, math.sin(a) * 1.18
+            px, py = -math.sin(a) * 0.17, math.cos(a) * 0.17
+            back.append((P([(bx - px, by - py), (tx, ty), (bx + px, by + py)]), dark))
+    if "wool" in f:
+        for k in range(13):
+            a = math.radians(150 + k * 20)
+            back.append((E(math.cos(a) * 0.9, math.sin(a) * 0.86, 0.32, 0.32), (250, 249, 252)))
+    if "fluff_top" in f:
+        for x in (-0.18, 0.0, 0.18):
+            back.append((E(x, -0.95 - (0.06 if x == 0 else 0), 0.2, 0.2), light))
+
+
+def draw_front_features(img, f, n, cx, cy, R, body, dark, light, line):
+    """Черты на теле: полоски, пятна, мордочка, носы, клювы, маски, шляпка гриба."""
+    E = lambda x, y, rx, ry: shape_mask(n, ell(cx + x * R, cy + y * R, rx * R, ry * R))
+    if "wool" in f:
+        for k in range(5):
+            a = math.radians(205 + k * 32)
+            paint(img, E(math.cos(a) * 0.7, math.sin(a) * 0.68, 0.26, 0.24), (250, 249, 252))
+    if "stripes" in f:
+        for x in (-0.22, 0.0, 0.22):
+            paint(img, line_mask(n, [(cx + x * R, cy - 0.96 * R), (cx + x * 0.8 * R, cy - 0.66 * R)], 0.08 * R), dark)
+        for s in (-1, 1):
+            for y in (-0.25, 0.1):
+                paint(img, line_mask(n, [(cx + s * 0.98 * R, cy + y * R), (cx + s * 0.7 * R, cy + (y + 0.08) * R)], 0.08 * R), dark)
+    for key, col, a in (("spots_dark", mix(body, INK, 0.55), 255), ("spots_light", (255, 255, 255), 150)):
+        if key in f:
+            for (x, y, r) in [(-0.6, -0.5, 0.13), (0.55, -0.6, 0.1), (0.72, 0.32, 0.12), (-0.74, 0.3, 0.1), (0.05, -0.78, 0.09)]:
+                paint(img, E(x, y, r, r), col, a)
+    if "muzzle" in f:
+        paint(img, E(0, 0.24, 0.42, 0.3), mix(body, (255, 255, 255), 0.65))
+    if "mask" in f:
+        paint(img, E(0, -0.02, 0.74, 0.21), (84, 74, 92))
+    if "cap" in f:
+        red = (228, 78, 78)
+        paint(img, outline_of(E(0, -0.82, 1.25, 0.6), int(n * 0.01)), mix(red, INK, 0.5))
+        shaded(img, E(0, -0.82, 1.25, 0.6), red, strength=0.25)
+        for (x, y, r) in [(-0.6, -0.9, 0.15), (0.05, -1.1, 0.12), (0.55, -0.85, 0.16), (-0.15, -0.7, 0.09)]:
+            paint(img, E(x, y, r, r * 0.85), (255, 250, 245))
+
+
+def draw_face_features(img, f, n, cx, cy, R, body):
+    """Носики и клювы — поверх мордочки."""
+    E = lambda x, y, rx, ry: shape_mask(n, ell(cx + x * R, cy + y * R, rx * R, ry * R))
+    if "nose" in f:
+        paint(img, E(0, 0.1, 0.09, 0.065), INK)
+    if "bignose" in f:
+        paint(img, E(0, 0.12, 0.17, 0.12), (70, 62, 80))
+    if "snout" in f:
+        paint(img, E(0, 0.2, 0.27, 0.19), mix(body, (235, 110, 140), 0.4))
+        for s in (-1, 1):
+            paint(img, E(s * 0.09, 0.2, 0.04, 0.06), mix(body, INK, 0.6))
+    if "trunk" in f:
+        tr = mix(body, INK, 0.12)
+        paint(img, line_mask(n, [(cx, cy + 0.1 * R), (cx + 0.02 * R, cy + 0.42 * R), (cx + 0.12 * R, cy + 0.62 * R)], 0.24 * R), tr)
+    if "beak" in f:
+        paint(img, shape_mask(n, poly([(cx - 0.13 * R, cy + 0.1 * R), (cx + 0.13 * R, cy + 0.1 * R), (cx, cy + 0.3 * R)])), (255, 168, 60))
+    if "whiskers" in f:
+        for s in (-1, 1):
+            for dy in (-0.04, 0.07):
+                paint(img, line_mask(n, [(cx + s * 0.42 * R, cy + 0.14 * R + dy * R), (cx + s * 0.86 * R, cy + 0.08 * R + dy * 1.8 * R)], 0.025 * R), INK, 170)
+
 def creature(idx, N=256):
     kind, body = CREATURES[idx]
     n = N * S
@@ -174,6 +319,8 @@ def creature(idx, N=256):
         for s in (-1, 1):
             back.append((shape_mask(n, poly([(cx + s * 0.35 * R, cy - 0.80 * R), (cx + s * 0.62 * R, cy - 1.18 * R), (cx + s * 0.80 * R, cy - 0.62 * R)])), body))
 
+    elif kind.startswith("feat:"):
+        draw_back_features(set(kind[5:].split()), n, cx, cy, R, body, dark, light, back)
     elif kind == "penguin":
         back.append((shape_mask(n, ell(cx, cy - 0.10 * R, 1.06 * R, 1.02 * R)), NAVY))      # тёмная «шапочка» и спинка
         for s in (-1, 1):
@@ -256,6 +403,9 @@ def creature(idx, N=256):
             ImageDraw.Draw(m).line([(cx - 0.1 * R, y + 0.04 * R), (cx + 0.1 * R, y - 0.04 * R)], fill=255, width=int(0.03 * R))
             paint(img, m, (220, 160, 60), 200)
 
+    feats = set(kind[5:].split()) if kind.startswith("feat:") else set()
+    if feats:
+        draw_front_features(img, feats, n, cx, cy, R, body, dark, light, line)
     if kind == "penguin":
         paint(img, shape_mask(n, poly([(cx - 0.12 * R, cy + 0.10 * R), (cx + 0.12 * R, cy + 0.10 * R), (cx, cy + 0.30 * R)])), (255, 170, 70))
     if kind == "hedgehog":
@@ -280,7 +430,9 @@ def creature(idx, N=256):
         paint(img, shape_mask(n, ell(cx + s * 0.58 * R, cy + 0.20 * R, 0.13 * R, 0.08 * R)), (245, 120, 150), 120)
     m = Image.new("L", (n, n), 0)
     ImageDraw.Draw(m).arc([cx - 0.13 * R, cy + 0.02 * R, cx + 0.13 * R, cy + 0.26 * R], 20, 160, fill=255, width=int(0.045 * R))
-    if kind not in ("owl", "penguin", "phoenix"): paint(img, m, INK)
+    if kind not in ("owl", "penguin", "phoenix") and not feats & {"snout", "trunk", "beak"}: paint(img, m, INK)
+    if feats:
+        draw_face_features(img, feats, n, cx, cy, R, body)
     return finish(img, N)
 
 for i in range(len(CREATURES)):

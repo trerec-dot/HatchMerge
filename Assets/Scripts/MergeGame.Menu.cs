@@ -53,6 +53,7 @@ public partial class MergeGame
         zooPanel = TL(content, 0, 0, 390, 700, "ZooPanel");
         Label(zooPanel, "Мои животные", 22, Ink, TextAnchor.MiddleLeft, 20, 82, 260, 36);
         zooGrid = TL(zooPanel, 0, 0, 390, 700, "Grid");
+        BuildZooPager();
 
         // --- магазин ---
         shopPanel = TL(content, 0, 0, 390, 700, "ShopPanel");
@@ -180,9 +181,13 @@ public partial class MergeGame
     void RefreshZooPanel()
     {
         foreach (Transform ch in zooGrid) Destroy(ch.gameObject);
-        for (int i = 0; i < Zoo.Length; i++)
+        if (zooPage < 0) zooPage = Mathf.Max(0, zooCount - 1) / ZooPerPage;
+        zooPage = Mathf.Clamp(zooPage, 0, ZooPages - 1);
+        zooPageTxt.text = (zooPage + 1) + " / " + ZooPages;
+        for (int i = zooPage * ZooPerPage; i < Mathf.Min(Zoo.Length, (zooPage + 1) * ZooPerPage); i++)
         {
-            var card = TL(zooGrid, 20 + (i % 3) * 120, 128 + (i / 3) * 124, 110, 114, "Card");
+            int k = i - zooPage * ZooPerPage;
+            var card = TL(zooGrid, 20 + (k % 3) * 120, 128 + (k / 3) * 124, 110, 114, "Card");
             Round(card, Color.white, 20);
             if (i < zooCount)
             {
@@ -197,6 +202,30 @@ public partial class MergeGame
                 Label(q, "?", 22, Ink, TextAnchor.MiddleCenter, 0, 0, 52, 52);
                 WrapLabel(card, "Яйцо уровня " + Zoo[i].target, 11, Muted, TextAnchor.UpperCenter, 4, 78, 102, 32);
             }
+        }
+    }
+
+    // ---------- Страницы зоопарка ----------
+    const int ZooPerPage = 12;
+    static int ZooPages => (Zoo.Length + ZooPerPage - 1) / ZooPerPage;
+    int zooPage = -1;          // -1 — при первом открытии показать страницу с последним открытым
+    Text zooPageTxt;
+
+    void BuildZooPager()
+    {
+        zooPageTxt = Label(zooPanel, "", 14, Muted, TextAnchor.MiddleCenter, 292, 82, 44, 36);
+        for (int d = -1; d <= 1; d += 2)
+        {
+            int dir = d;
+            var arrow = TL(zooPanel, d < 0 ? 254 : 334, 82, 38, 36, "Page");
+            Round(arrow, Color.white, 18);
+            Label(arrow, d < 0 ? "‹" : "›", 24, Ink, TextAnchor.MiddleCenter, 0, -2, 38, 36);
+            AddBtn(arrow, () =>
+            {
+                GameAudio.Click();
+                zooPage = (zooPage + dir + ZooPages) % ZooPages;
+                RefreshZooPanel();
+            }, 1);
         }
     }
 

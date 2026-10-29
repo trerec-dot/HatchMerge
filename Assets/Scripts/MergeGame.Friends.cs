@@ -385,9 +385,12 @@ public partial class MergeGame
 
         foreach (Transform ch in profZoo) Destroy(ch.gameObject);
         Label(profZoo, p.zoo + " из " + total, 13, Muted, TextAnchor.MiddleRight, 200, 8, 132, 28);
-        for (int i = 0; i < Zoo.Length; i++)
+        // 12 мест: последние открытые животные и следующие за ними
+        int first = Mathf.Clamp(p.zoo - 12, 0, Mathf.Max(0, Zoo.Length - 12));
+        for (int i = first; i < Mathf.Min(Zoo.Length, first + 12); i++)
         {
-            float cx = 34 + (i % 6) * 56.4f, cy = 64 + (i / 6) * 50;
+            int k = i - first;
+            float cx = 34 + (k % 6) * 56.4f, cy = 64 + (k / 6) * 50;
             if (i < p.zoo)
             {
                 var cr = MakeCreature(profZoo, i, 34f);

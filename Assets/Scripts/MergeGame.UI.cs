@@ -213,6 +213,7 @@ public partial class MergeGame
         btnImg.color = (energy > 0 && HasEmpty()) ? Red : C(216, 201, 190);
         for (int i = 0; i < priceImg.Length; i++)
             if (priceImg[i] != null) priceImg[i].color = gems >= Prices[i] ? Red : C(216, 201, 190);
+        RefreshCosShop();                    // цены оформления зависят от монет
     }
 
     void RefreshQuest()

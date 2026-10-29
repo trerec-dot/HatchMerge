@@ -29,7 +29,7 @@ API (JSON):
   POST /api/admin/release?...    тело — APK; доступ: заголовок Authorization: Bearer <пароль администратора>
                                  или сессия админки + заголовок X-CSRF. Параметры: versionCode, versionName, notes, force
   POST /api/shop/state          {"id","token"}                -> {"ok","mode","owned":[...],"items":[{"id","price"}]}
-  POST /api/shop/buy            {"id","token","item"}         -> {"ok","granted","owned"} (тестовый режим) или {"ok","payUrl"}
+  POST /api/shop/buy            {"id","token","item"}         -> {"ok","granted","owned"}  (оплата монетами — списывает игра)
   POST /api/grants/ack           {"id","token","ids":[...]}    -> {"ok"}   подарки администратора получены
   Ответ /api/status содержит "grants" — начисления/списания от администратора, ещё не полученные игрой.
   Заблокированный игрок получает 403 {"error":"banned","reason":...}.
@@ -68,7 +68,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 #   HATCHMERGE_SMTP_HOST, HATCHMERGE_SMTP_PORT, HATCHMERGE_SMTP_USER, HATCHMERGE_SMTP_PASSWORD,
 #   HATCHMERGE_SMTP_FROM    почтовый ящик для писем с кодом сброса пароля (без них сброс — только через /admin)
 #   HATCHMERGE_RELEASES     папка для APK-обновлений (по умолчанию — releases рядом с базой)
-#   HATCHMERGE_PAYMENTS     оплата в магазине оформления: test (по умолчанию — покупка без списания денег) или off
 #   HATCHMERGE_ADMIN_PASSWORD  пароль страницы администратора /admin
 #                           (на VPS задаётся в /etc/hatchmerge.env; без пароля /admin открыт только
 #                           при запуске на своём ПК, а за Caddy — выключен)
@@ -89,21 +88,20 @@ RESET_MAX_ATTEMPTS = 5
 DISCOVERY_PORT = 47777
 ONLINE_WINDOW = 70          # секунд без сообщений, после которых игрок считается «не в сети»
 NICK_A_COUNT = NICK_B_COUNT = 16
-ZOO_MAX = 12
+ZOO_MAX = 42
 MAX_LEVEL = 11
 MAX_BODY = 16384
 MAX_SAVE = 8192
 MAX_FRIENDS = 100
-PAYMENTS = os.environ.get("HATCHMERGE_PAYMENTS", "test")
 
-# Магазин оформления: id -> (название, вид, цена в рублях). Тот же список — в игре (MergeGame.Cosmetics.cs).
+# Магазин оформления: id -> (название, вид, цена в монетах). Тот же список — в игре (MergeGame.Cosmetics.cs).
 SHOP_ITEMS = {
-    "bg_stars":    ("Фон «Звёздное небо»", "фон", 79),
-    "bg_meadow":   ("Фон «Мятный луг»", "фон", 49),
-    "ui_ocean":    ("Стиль «Океан»", "стиль", 49),
-    "ui_berry":    ("Стиль «Ягодный»", "стиль", 49),
-    "fr_gold":     ("Рамка «Золотая»", "рамка", 29),
-    "fr_rainbow":  ("Рамка «Радужная»", "рамка", 49),
+    "bg_stars":    ("Фон «Звёздное небо»", "фон", 3000),
+    "bg_meadow":   ("Фон «Мятный луг»", "фон", 2000),
+    "ui_ocean":    ("Стиль «Океан»", "стиль", 2500),
+    "ui_berry":    ("Стиль «Ягодный»", "стиль", 2500),
+    "fr_gold":     ("Рамка «Золотая»", "рамка", 1500),
+    "fr_rainbow":  ("Рамка «Радужная»", "рамка", 4000),
 }            # размер сохранения игры, байт
 PBKDF2_ROUNDS = 200_000
 DB_PATH = os.environ.get("HATCHMERGE_DB") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "hatchmerge.db")
@@ -284,7 +282,15 @@ def valid_save(value):
 
 ZOO_NAMES = ["Облачко-пушистик", "Дракончик-тапок", "Медузка-шарик", "Лисёнок-носок",
              "Котик-клубочек", "Совёнок-пончик", "Зайка-варежка", "Единорожек-пирожок",
-             "Пингвинчик-пломбир", "Ёжик-кексик", "Пандочка-зефирка", "Фениксик-фонарик"]
+             "Пингвинчик-пломбир", "Ёжик-кексик", "Пандочка-зефирка", "Фениксик-фонарик",
+             "Мышонок-сырничек", "Лягушонок-леденец", "Тигрёнок-мандарин", "Мишка-медовик",
+             "Коала-печенька", "Слонёнок-зефир", "Осьминожка-мармелад", "Черепашка-пряник",
+             "Коровка-клубничка", "Пчёлка-медуница", "Улитка-круассан", "Бельчонок-орешек",
+             "Енотик-эклер", "Хомячок-булочка", "Поросёнок-пастила", "Овечка-безе",
+             "Оленёнок-карамелька", "Ленивец-какао", "Тюленчик-снежок", "Кит-голубика",
+             "Крабик-ириска", "Динозаврик-киви", "Лама-латте", "Цыплёнок-лимончик",
+             "Пёсик-бублик", "Рысёнок-брусничка", "Умка-сгущёнка", "Утёнок-ванилька",
+             "Летучка-черничка", "Грибочек-маффин"]
 EGG_COLORS = ["", "#f6d6a8", "#9ed8c6", "#8ec5f2", "#f5a7c8", "#c7a6f2", "#ffc978", "#ff8c78",
               "#78d7eb", "#ffe16e", "#afe68c", "#e696f0"]
 
@@ -326,7 +332,7 @@ th{font-size:12px;color:var(--muted);font-weight:600}td.n{text-align:right;font-
 .kv th{width:45%}.kv td{white-space:normal}
 .grid{display:grid;grid-template-columns:repeat(5,34px);gap:4px}
 .cell{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;color:#3b2a4a}
-.zoo{list-style:none;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.zoo{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px}
 .zoo li{padding:6px 10px;border-radius:10px;background:var(--line)}.zoo li.lock{opacity:.45}
 .zoo li.got::before{content:"✓ ";color:var(--on)}
 .ban{color:var(--accent);font-weight:600}.plus{color:var(--on)}.minus{color:var(--accent)}
@@ -785,24 +791,19 @@ class Handler(BaseHTTPRequestHandler):
             pid = row["id"]
             has_account = _db.execute("SELECT 1 FROM accounts WHERE player_id=?", (pid,)).fetchone() is not None
             if action == "state":
-                return self.send_json(200, {"ok": True, "mode": PAYMENTS, "account": has_account, "owned": owned_items(pid),
+                return self.send_json(200, {"ok": True, "mode": "coins", "account": has_account, "owned": owned_items(pid),
                                             "items": [{"id": k, "price": v[2]} for k, v in SHOP_ITEMS.items()]})
             item = str(body.get("item", ""))
             if item not in SHOP_ITEMS:
                 return self.send_json(400, {"ok": False, "error": "bad_item"})
-            if not has_account:
-                return self.send_json(403, {"ok": False, "error": "need_account"})
             if item in owned_items(pid):
                 return self.send_json(200, {"ok": True, "granted": True, "owned": owned_items(pid)})
-            if PAYMENTS != "test":
-                # здесь подключается платёжный сервис: создать заказ, вернуть {"payUrl": ссылка на оплату},
-                # а покупку записать, когда сервис сообщит об успешной оплате
-                return self.send_json(503, {"ok": False, "error": "payments_off"})
+            # монеты хранит и списывает игра; сервер запоминает покупку, чтобы она была на всех устройствах
             _db.execute("INSERT INTO purchases (player_id, item, price, provider, created) VALUES (?,?,?,?,?)",
-                        (pid, item, SHOP_ITEMS[item][2], "test", time.time()))
+                        (pid, item, SHOP_ITEMS[item][2], "coins", time.time()))
             _db.commit()
             owned = owned_items(pid)
-        print(f"{time.strftime('%H:%M:%S')}  тестовая покупка: {SHOP_ITEMS[item][0]} — ID {pid}")
+        print(f"{time.strftime('%H:%M:%S')}  покупка за монеты: {SHOP_ITEMS[item][0]} — ID {pid}")
         return self.send_json(200, {"ok": True, "granted": True, "owned": owned})
 
     def friends_api(self, action, body):
@@ -1042,7 +1043,7 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
 <div class=card><b>{total}</b>игроков</div><div class=card><b>{online}</b>сейчас в сети</div>
 <div class=card><b>{accounts}</b>с аккаунтом</div><div class=card><b>{today}</b>новых за сутки</div>
 <div class=card><b>{banned}</b>заблокировано</div>
-<div class=card><b>{pur[0]}</b>покупок ({pur[1]} ₽{' · тест' if PAYMENTS == 'test' else ''})</div></div>
+<div class=card><b>{pur[0]}</b>покупок оформления</div></div>
 <p><a href="/admin/releases">Обновления игры →</a></p>
 <form class=search><input name=q value="{html.escape(q)}" placeholder="Поиск: ID, почта или имя"><button>Найти</button>
 {'<a href="/admin">сбросить</a>' if q else ''}</form>
@@ -1291,15 +1292,15 @@ document.getElementById('up').onsubmit = function (e) {{
                 f"<form method=post action='/admin/purchase/{x['id']}/revoke' style='display:inline'>"
                 f"<input type=hidden name=csrf value='{csrf}'><button class=small "
                 f"onclick=\"return confirm('Отозвать покупку?')\">Отозвать</button></form>")
-            src = {"test": "тест", "admin": "выдано админом"}.get(x["provider"], x["provider"])
-            rows.append(f"<tr><td>{fmt_time(x['created'])}</td><td>{html.escape(title)}</td><td class=n>{x['price']} ₽</td>"
+            src = {"coins": "за монеты", "test": "тест", "admin": "выдано админом"}.get(x["provider"], x["provider"])
+            rows.append(f"<tr><td>{fmt_time(x['created'])}</td><td>{html.escape(title)}</td><td class=n>{x['price']} мон.</td>"
                         f"<td>{html.escape(src)}</td><td>{st}</td></tr>")
         table = (f"<div class=wrap2><table><tr><th>Когда</th><th>Предмет</th><th>Цена</th><th>Источник</th><th></th></tr>"
                  f"{''.join(rows)}</table></div>") if rows else "<p class=muted>Покупок нет</p>"
         opts = "".join(f"<option value='{k}'>{html.escape(v[0])}</option>" for k, v in SHOP_ITEMS.items())
         frame = SHOP_ITEMS.get(r["frame"], ("—",))[0] if r["frame"] else "—"
         return f"""<div class=card style="margin-top:16px"><h3>Магазин оформления</h3>
-<p class=muted>Надетая рамка: {html.escape(frame)}. Режим оплаты: {'тестовый (без списания денег)' if PAYMENTS == 'test' else html.escape(PAYMENTS)}.</p>
+<p class=muted>Надетая рамка: {html.escape(frame)}. Оформление покупается за монеты игры.</p>
 {table}
 <form method=post action="/admin/player/{pid}/giveitem" class=row style="margin-top:10px">
 <input type=hidden name=csrf value='{csrf}'><select name=item style="font:inherit;padding:10px;border-radius:10px">{opts}</select>
