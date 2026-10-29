@@ -20,7 +20,7 @@ public partial class MergeGame : MonoBehaviour
     static Color C(int r, int g, int b, float a = 1f) => new Color(r / 255f, g / 255f, b / 255f, a);
     static readonly Color Ink = new Color(59 / 255f, 42 / 255f, 74 / 255f);
     static readonly Color Muted = new Color(90 / 255f, 72 / 255f, 104 / 255f);
-    static readonly Color Red = new Color(201 / 255f, 60 / 255f, 32 / 255f);
+    static Color Red = new Color(201 / 255f, 60 / 255f, 32 / 255f);   // акцентный цвет — меняется стилем интерфейса
 
     internal static readonly Color[] Palette =
     {
@@ -92,6 +92,7 @@ public partial class MergeGame : MonoBehaviour
         GameAudio.Init(gameObject, mOn, sOn);
         BuildUI();
         BuildMenu();
+        InitCosmetics();
         if (!LoadGrid()) Seed();
         RefreshAll();
         tab = TabStart;                // игра начинается со стартового меню

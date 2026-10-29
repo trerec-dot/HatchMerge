@@ -115,7 +115,7 @@ public partial class MergeGame
         myIdTxt.text = string.IsNullOrEmpty(netId) ? "ID: —" : "Мой ID: " + netId;
         myNetTxt.text = NetStateText();
         myDot.color = NetStateColor();
-        DrawAvatar(myAvatar, MyAvatar(), 48f, new Vector2(42, 42));
+        DrawAvatar(myAvatar, MyAvatar(), 48f, new Vector2(42, 42), cosFr);
     }
 
     void RefreshSearchBox()
@@ -184,7 +184,7 @@ public partial class MergeGame
         int total = p.zooTotal > 0 ? p.zooTotal : Zoo.Length;
         foundProg.text = "Уровень " + p.level + " · животных " + p.zoo + " из " + total;
         foundExtra.text = "Монеты " + Fmt(p.score) + " · кристаллы " + p.gems;
-        DrawAvatar(foundAvatar, p.avatar, 52f, new Vector2(44, 62));
+        DrawAvatar(foundAvatar, p.avatar, 52f, new Vector2(44, 62), p.frame);
         RefreshFoundFriendButton();
     }
 

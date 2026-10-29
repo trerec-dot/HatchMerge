@@ -73,6 +73,7 @@ public partial class MergeGame
             Label(pill, Prices[i].ToString(), 16, Color.white, TextAnchor.MiddleLeft, 40, 0, 32, 36);
             AddBtn(pill, () => Buy(idx), 2);
         }
+        BuildCosShop();
 
         // --- настройки ---
         setPanel = TL(content, 0, 0, 390, 700, "SettingsPanel");

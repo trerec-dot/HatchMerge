@@ -73,7 +73,7 @@ public partial class MergeGame
         startPlayTxt.text = (score > 0 || zooCount > 0) ? "Продолжить" : "Играть";
         startNickTxt.text = NickName(nickA, nickB);
         startAccTxt.text = HasAccount ? "Аккаунт" : "Войти";
-        DrawAvatar(startAvatar, MyAvatar(), 46f, new Vector2(38, 36));
+        DrawAvatar(startAvatar, MyAvatar(), 46f, new Vector2(38, 36), cosFr);
         RefreshStartNet();
     }
 
@@ -97,9 +97,10 @@ public partial class MergeGame
     }
 
     // Аватар: последнее открытое животное, а если животных ещё нет — яйцо
-    static void DrawAvatar(RectTransform holder, int creature, float size, Vector2 center)
+    static void DrawAvatar(RectTransform holder, int creature, float size, Vector2 center, string frame = null)
     {
         foreach (Transform ch in holder) Destroy(ch.gameObject);
+        if (!string.IsNullOrEmpty(frame)) DrawFrame(holder, frame, size, center);   // рамка из магазина оформления
         if (creature >= 0 && creature < Zoo.Length)
         {
             var cr = MakeCreature(holder, creature, size);

@@ -286,7 +286,7 @@ public partial class MergeGame
             row.dot.color = p.online ? C(110, 200, 160) : C(200, 190, 210);
             row.status.text = (p.online ? "В сети" : "Был " + AgoText(p.lastSeenSec)) + (p.mutual ? " · дружим" : "");
             row.level.text = "Ур. " + p.level;
-            DrawAvatar(row.avatar, p.avatar, 36f, new Vector2(32, 29));
+            DrawAvatar(row.avatar, p.avatar, 36f, new Vector2(32, 29), p.frame);
         }
         friendsPrev.gameObject.SetActive(friendsPage > 0);
         friendsNext.gameObject.SetActive(friendsPage < pages - 1);
@@ -374,7 +374,7 @@ public partial class MergeGame
         profDot.color = p.online ? C(110, 200, 160) : C(200, 190, 210);
         profStatus.text = p.online ? "В сети" : "Не в сети · был " + AgoText(p.lastSeenSec);
         profMutual.text = isFriend && p.mutual ? "Вы дружите взаимно" : "";
-        DrawAvatar(profAvatar, p.avatar, 76f, new Vector2(56, 65));
+        DrawAvatar(profAvatar, p.avatar, 76f, new Vector2(56, 65), p.frame);
 
         int total = p.zooTotal > 0 ? p.zooTotal : Zoo.Length;
         profStats.text =

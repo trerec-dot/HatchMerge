@@ -28,6 +28,8 @@ API (JSON):
   GET  /download/<файл>.apk      -> APK последней (или одной из прошлых) версии
   POST /api/admin/release?...    тело — APK; доступ: заголовок Authorization: Bearer <пароль администратора>
                                  или сессия админки + заголовок X-CSRF. Параметры: versionCode, versionName, notes, force
+  POST /api/shop/state          {"id","token"}                -> {"ok","mode","owned":[...],"items":[{"id","price"}]}
+  POST /api/shop/buy            {"id","token","item"}         -> {"ok","granted","owned"} (тестовый режим) или {"ok","payUrl"}
   POST /api/grants/ack           {"id","token","ids":[...]}    -> {"ok"}   подарки администратора получены
   Ответ /api/status содержит "grants" — начисления/списания от администратора, ещё не полученные игрой.
   Заблокированный игрок получает 403 {"error":"banned","reason":...}.
@@ -66,6 +68,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 #   HATCHMERGE_SMTP_HOST, HATCHMERGE_SMTP_PORT, HATCHMERGE_SMTP_USER, HATCHMERGE_SMTP_PASSWORD,
 #   HATCHMERGE_SMTP_FROM    почтовый ящик для писем с кодом сброса пароля (без них сброс — только через /admin)
 #   HATCHMERGE_RELEASES     папка для APK-обновлений (по умолчанию — releases рядом с базой)
+#   HATCHMERGE_PAYMENTS     оплата в магазине оформления: test (по умолчанию — покупка без списания денег) или off
 #   HATCHMERGE_ADMIN_PASSWORD  пароль страницы администратора /admin
 #                           (на VPS задаётся в /etc/hatchmerge.env; без пароля /admin открыт только
 #                           при запуске на своём ПК, а за Caddy — выключен)
@@ -90,7 +93,18 @@ ZOO_MAX = 12
 MAX_LEVEL = 11
 MAX_BODY = 16384
 MAX_SAVE = 8192
-MAX_FRIENDS = 100            # размер сохранения игры, байт
+MAX_FRIENDS = 100
+PAYMENTS = os.environ.get("HATCHMERGE_PAYMENTS", "test")
+
+# Магазин оформления: id -> (название, вид, цена в рублях). Тот же список — в игре (MergeGame.Cosmetics.cs).
+SHOP_ITEMS = {
+    "bg_stars":    ("Фон «Звёздное небо»", "фон", 79),
+    "bg_meadow":   ("Фон «Мятный луг»", "фон", 49),
+    "ui_ocean":    ("Стиль «Океан»", "стиль", 49),
+    "ui_berry":    ("Стиль «Ягодный»", "стиль", 49),
+    "fr_gold":     ("Рамка «Золотая»", "рамка", 29),
+    "fr_rainbow":  ("Рамка «Радужная»", "рамка", 49),
+}            # размер сохранения игры, байт
 PBKDF2_ROUNDS = 200_000
 DB_PATH = os.environ.get("HATCHMERGE_DB") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "hatchmerge.db")
 RELEASES_DIR = os.environ.get("HATCHMERGE_RELEASES") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "releases")
@@ -138,7 +152,7 @@ if "save" not in _cols:
 if "save_ver" not in _cols:
     _db.execute("ALTER TABLE players ADD COLUMN save_ver INTEGER NOT NULL DEFAULT 0")
 for _col, _sql in (("banned", "INTEGER NOT NULL DEFAULT 0"), ("ban_reason", "TEXT NOT NULL DEFAULT ''"),
-                   ("banned_at", "REAL NOT NULL DEFAULT 0")):
+                   ("banned_at", "REAL NOT NULL DEFAULT 0"), ("frame", "TEXT NOT NULL DEFAULT ''")):
     if _col not in _cols:
         _db.execute(f"ALTER TABLE players ADD COLUMN {_col} {_sql}")
 _db.execute("""
@@ -154,6 +168,18 @@ _db.execute("""
         canceled   INTEGER NOT NULL DEFAULT 0
     )""")
 _db.execute("CREATE INDEX IF NOT EXISTS grants_player ON grants(player_id, applied_at)")
+_db.execute("""
+    CREATE TABLE IF NOT EXISTS purchases (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        player_id TEXT NOT NULL,
+        item      TEXT NOT NULL,
+        price     INTEGER NOT NULL DEFAULT 0,
+        provider  TEXT NOT NULL,
+        order_ref TEXT NOT NULL DEFAULT '',
+        created   REAL NOT NULL,
+        revoked   INTEGER NOT NULL DEFAULT 0
+    )""")
+_db.execute("CREATE INDEX IF NOT EXISTS purchases_player ON purchases(player_id)")
 _db.execute("""
     CREATE TABLE IF NOT EXISTS friends (
         player_id TEXT NOT NULL,
@@ -205,7 +231,13 @@ def player_json(row, now):
         "score": row["score"], "gems": row["gems"], "bestEgg": row["best_egg"],
         "online": online, "lastSeenSec": int(max(0, now - row["last_seen"])),
         "sinceDays": int(max(0, now - row["created"]) // 86400),
+        "frame": row["frame"] if "frame" in row.keys() else "",
     }
+
+
+def owned_items(pid):
+    """Купленные игроком предметы оформления (вызывать под _db_lock)."""
+    return sorted({r[0] for r in _db.execute("SELECT item FROM purchases WHERE player_id=? AND revoked=0", (pid,))})
 
 
 def friends_count(pid):
@@ -637,11 +669,18 @@ class Handler(BaseHTTPRequestHandler):
                             v = min(v, zoo - 1) if v >= 0 else -1
                         sets.append(col + "=?")
                         values.append(v)
+                if "frame" in body:                          # рамку можно надеть, только если она куплена
+                    fr = str(body.get("frame") or "")
+                    sets.append("frame=?")
+                    values.append(fr if fr.startswith("fr_") and fr in owned_items(pid) else "")
                 _db.execute(f"UPDATE players SET {', '.join(sets)} WHERE id=?", (*values, pid))
                 _db.commit()
                 grants = [dict(id=g["id"], coins=g["coins"], gems=g["gems"], energy=g["energy"]) for g in _db.execute(
                     "SELECT * FROM grants WHERE player_id=? AND applied_at IS NULL AND canceled=0 ORDER BY id", (pid,))]
             return self.send_json(200, {"ok": True, "grants": grants})
+
+        if path in ("/api/shop/state", "/api/shop/buy"):
+            return self.shop_api(path.rsplit("/", 1)[1], body)
 
         if path in ("/api/friends/list", "/api/friends/add", "/api/friends/remove"):
             return self.friends_api(path.rsplit("/", 1)[1], body)
@@ -737,6 +776,34 @@ class Handler(BaseHTTPRequestHandler):
         if row["banned"]:
             return self.send_json(403, banned_json(row))
         return self.send_json(200, login_json(row, email))
+
+    def shop_api(self, action, body):
+        with _db_lock:
+            row, err = self.auth_player(body)
+            if err:
+                return self.send_json(*err)
+            pid = row["id"]
+            has_account = _db.execute("SELECT 1 FROM accounts WHERE player_id=?", (pid,)).fetchone() is not None
+            if action == "state":
+                return self.send_json(200, {"ok": True, "mode": PAYMENTS, "account": has_account, "owned": owned_items(pid),
+                                            "items": [{"id": k, "price": v[2]} for k, v in SHOP_ITEMS.items()]})
+            item = str(body.get("item", ""))
+            if item not in SHOP_ITEMS:
+                return self.send_json(400, {"ok": False, "error": "bad_item"})
+            if not has_account:
+                return self.send_json(403, {"ok": False, "error": "need_account"})
+            if item in owned_items(pid):
+                return self.send_json(200, {"ok": True, "granted": True, "owned": owned_items(pid)})
+            if PAYMENTS != "test":
+                # здесь подключается платёжный сервис: создать заказ, вернуть {"payUrl": ссылка на оплату},
+                # а покупку записать, когда сервис сообщит об успешной оплате
+                return self.send_json(503, {"ok": False, "error": "payments_off"})
+            _db.execute("INSERT INTO purchases (player_id, item, price, provider, created) VALUES (?,?,?,?,?)",
+                        (pid, item, SHOP_ITEMS[item][2], "test", time.time()))
+            _db.commit()
+            owned = owned_items(pid)
+        print(f"{time.strftime('%H:%M:%S')}  тестовая покупка: {SHOP_ITEMS[item][0]} — ID {pid}")
+        return self.send_json(200, {"ok": True, "granted": True, "owned": owned})
 
     def friends_api(self, action, body):
         now = time.time()
@@ -950,6 +1017,8 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
                                   ORDER BY p.last_seen DESC""").fetchall()
         total, accounts = len(rows), sum(1 for r in rows if r["email"])
         banned = sum(1 for r in rows if r["banned"])
+        with _db_lock:
+            pur = _db.execute("SELECT COUNT(*), COALESCE(SUM(price),0) FROM purchases WHERE revoked=0").fetchone()
         online = sum(1 for r in rows if player_json(r, now)["online"])
         today = sum(1 for r in rows if now - r["created"] < 86400)
         if q:
@@ -972,7 +1041,8 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
         body = f"""<div class=stats>
 <div class=card><b>{total}</b>игроков</div><div class=card><b>{online}</b>сейчас в сети</div>
 <div class=card><b>{accounts}</b>с аккаунтом</div><div class=card><b>{today}</b>новых за сутки</div>
-<div class=card><b>{banned}</b>заблокировано</div></div>
+<div class=card><b>{banned}</b>заблокировано</div>
+<div class=card><b>{pur[0]}</b>покупок ({pur[1]} ₽{' · тест' if PAYMENTS == 'test' else ''})</div></div>
 <p><a href="/admin/releases">Обновления игры →</a></p>
 <form class=search><input name=q value="{html.escape(q)}" placeholder="Поиск: ID, почта или имя"><button>Найти</button>
 {'<a href="/admin">сбросить</a>' if q else ''}</form>
@@ -1035,6 +1105,7 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
 <div class=card><h3>Сохранение на сервере</h3><table class=kv>{save_html}</table>
 <h3>Зоопарк</h3><ul class=zoo>{zoo}</ul></div></div>
 {self.admin_friends(r['id'], now)}
+{self.admin_purchases(r)}
 {self.admin_manage(r)}"""
         return self.send_html(200, admin_shell(f"Игрок {r['id']}", body))
 
@@ -1209,6 +1280,31 @@ document.getElementById('up').onsubmit = function (e) {{
 </script>"""
         return self.send_html(200, admin_shell("Обновления", body))
 
+    def admin_purchases(self, r):
+        pid, csrf = r["id"], html.escape(self.admin_csrf())
+        with _db_lock:
+            items = _db.execute("SELECT * FROM purchases WHERE player_id=? ORDER BY id DESC", (pid,)).fetchall()
+        rows = []
+        for x in items:
+            title = SHOP_ITEMS.get(x["item"], (x["item"],))[0]
+            st = "<span class=muted>отозвано</span>" if x["revoked"] else (
+                f"<form method=post action='/admin/purchase/{x['id']}/revoke' style='display:inline'>"
+                f"<input type=hidden name=csrf value='{csrf}'><button class=small "
+                f"onclick=\"return confirm('Отозвать покупку?')\">Отозвать</button></form>")
+            src = {"test": "тест", "admin": "выдано админом"}.get(x["provider"], x["provider"])
+            rows.append(f"<tr><td>{fmt_time(x['created'])}</td><td>{html.escape(title)}</td><td class=n>{x['price']} ₽</td>"
+                        f"<td>{html.escape(src)}</td><td>{st}</td></tr>")
+        table = (f"<div class=wrap2><table><tr><th>Когда</th><th>Предмет</th><th>Цена</th><th>Источник</th><th></th></tr>"
+                 f"{''.join(rows)}</table></div>") if rows else "<p class=muted>Покупок нет</p>"
+        opts = "".join(f"<option value='{k}'>{html.escape(v[0])}</option>" for k, v in SHOP_ITEMS.items())
+        frame = SHOP_ITEMS.get(r["frame"], ("—",))[0] if r["frame"] else "—"
+        return f"""<div class=card style="margin-top:16px"><h3>Магазин оформления</h3>
+<p class=muted>Надетая рамка: {html.escape(frame)}. Режим оплаты: {'тестовый (без списания денег)' if PAYMENTS == 'test' else html.escape(PAYMENTS)}.</p>
+{table}
+<form method=post action="/admin/player/{pid}/giveitem" class=row style="margin-top:10px">
+<input type=hidden name=csrf value='{csrf}'><select name=item style="font:inherit;padding:10px;border-radius:10px">{opts}</select>
+<button>Выдать бесплатно</button></form></div>"""
+
     def flash(self):
         msg = parse_qs(self.path.partition("?")[2]).get("msg", [""])[0][:200]
         secret = self.session_store().pop("secret", "")
@@ -1306,7 +1402,20 @@ document.getElementById('up').onsubmit = function (e) {{
                 _db.commit()
             return self.redirect(f"/admin/player/{g['player_id']}?msg={quote(msg)}")
 
-        m = re.fullmatch(r"/admin/player/(\d{6})/(grant|ban|unban|resetpw)", path)
+        m = re.fullmatch(r"/admin/purchase/(\d+)/revoke", path)
+        if m:
+            with _db_lock:
+                x = _db.execute("SELECT * FROM purchases WHERE id=?", (int(m.group(1)),)).fetchone()
+                if x is None:
+                    return self.redirect("/admin")
+                _db.execute("UPDATE purchases SET revoked=1 WHERE id=?", (x["id"],))
+                if x["item"] not in owned_items(x["player_id"]):
+                    _db.execute("UPDATE players SET frame='' WHERE id=? AND frame=?", (x["player_id"], x["item"]))
+                admin_log(ip, x["player_id"], "Покупка отозвана", SHOP_ITEMS.get(x["item"], (x["item"],))[0])
+                _db.commit()
+            return self.redirect(f"/admin/player/{x['player_id']}?msg={quote('Покупка отозвана')}")
+
+        m = re.fullmatch(r"/admin/player/(\d{6})/(grant|ban|unban|resetpw|giveitem)", path)
         if not m:
             return self.redirect("/admin")
         pid, action = m.groups()
@@ -1332,6 +1441,17 @@ document.getElementById('up').onsubmit = function (e) {{
                 _db.execute("UPDATE players SET banned=1, ban_reason=?, banned_at=?, online=0 WHERE id=?", (reason, now, pid))
                 admin_log(ip, pid, "Блокировка", reason)
                 msg = "Игрок заблокирован"
+            elif action == "giveitem":
+                item = form.get("item", "")
+                if item not in SHOP_ITEMS:
+                    msg = "Нет такого предмета"
+                elif item in owned_items(pid):
+                    msg = "У игрока уже есть этот предмет"
+                else:
+                    _db.execute("INSERT INTO purchases (player_id, item, price, provider, created) VALUES (?,?,0,'admin',?)",
+                                (pid, item, now))
+                    admin_log(ip, pid, "Выдан предмет", SHOP_ITEMS[item][0])
+                    msg = "Предмет выдан — игрок увидит его в магазине оформления"
             elif action == "resetpw":
                 acc = _db.execute("SELECT email FROM accounts WHERE player_id=?", (pid,)).fetchone()
                 if acc is None:

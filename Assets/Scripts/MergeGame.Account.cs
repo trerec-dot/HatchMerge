@@ -22,6 +22,7 @@ class GameSave
 {
     public int v, score, gems, zoo, energy;
     public int avatar;          // выбранный аватар + 2 (0 — в старых сохранениях, значит «авто»)
+    public string bg, ui, fr;   // надетое оформление (null — в старых сохранениях)
     public bool music, sfx;
     public int[] grid;
 }
@@ -107,7 +108,7 @@ public partial class MergeGame
         return new GameSave
         {
             v = 1, score = score, gems = gems, zoo = zooCount, energy = energy,
-            music = GameAudio.MusicOn, sfx = GameAudio.SfxOn, grid = g, avatar = avatarSel + 2,
+            music = GameAudio.MusicOn, sfx = GameAudio.SfxOn, grid = g, avatar = avatarSel + 2, bg = cosBg, ui = cosUi, fr = cosFr,
         };
     }
 
@@ -126,6 +127,13 @@ public partial class MergeGame
         GameAudio.SetMusic(s.music);
         GameAudio.SetSfx(s.sfx);
         SetAvatarSel(s.avatar > 0 ? s.avatar - 2 : AvatarAuto);
+        if (s.bg != null && s.ui != null && s.fr != null)
+        {
+            cosBg = s.bg; cosUi = s.ui; cosFr = s.fr;
+            PlayerPrefs.SetString("cos_bg", cosBg); PlayerPrefs.SetString("cos_ui", cosUi); PlayerPrefs.SetString("cos_fr", cosFr);
+            ApplyCosmetics();
+            shopLoaded = false;          // сверить с купленным на сервере
+        }
 
         foreach (var e in grid) if (e != null) Destroy(e.gameObject);
         Array.Clear(grid, 0, grid.Length);
@@ -305,6 +313,7 @@ public partial class MergeGame
         accLoaded = true;
         PlayerPrefs.Save();
 
+        shopLoaded = false;              // загрузить покупки этого аккаунта
         accPassField.value = "";
         resetCodeField.value = resetPassField.value = "";
         accResetMode = false;
@@ -439,6 +448,8 @@ public partial class MergeGame
         if (accDirty && netState == NetState.Online) yield return UploadSave();   // не потерять последние ходы
 
         ForgetAccountLocal();
+        SetOwned(new string[0]);          // покупки остаются в аккаунте, на устройстве — снимаем
+        shopLoaded = false;
         netId = netToken = "";
         PlayerPrefs.DeleteKey("net_id");
         PlayerPrefs.DeleteKey("net_token");

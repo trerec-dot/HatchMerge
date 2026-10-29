@@ -26,7 +26,7 @@ using System.Threading;
 [Serializable]
 class NetStatusReq
 {
-    public string id, token;
+    public string id, token, frame;
     public int nickA, nickB, avatar, level, zoo, zooTotal, score, gems, bestEgg;
     public bool online;
 }
@@ -35,7 +35,7 @@ class NetStatusReq
 class NetPlayer
 {
     public bool ok, found, online, mutual;
-    public string id;
+    public string id, frame;
     public int nickA, nickB, avatar, level, zoo, zooTotal, score, gems, bestEgg, lastSeenSec, sinceDays, friends;
 }
 
@@ -99,6 +99,9 @@ public partial class MergeGame
                 lastStatus = Time.unscaledTime;
                 yield return SendStatus(true);
             }
+            // купленное оформление — один раз за запуск (и после входа в аккаунт)
+            if (netState == NetState.Online && !shopLoaded) yield return LoadShopState();
+
             // обновление игры — один раз за запуск
             if (netState == NetState.Online && !updateChecked) yield return CheckUpdate(false);
 
@@ -240,7 +243,7 @@ public partial class MergeGame
     NetStatusReq MyStatus(bool online) => new NetStatusReq
     {
         id = netId, token = netToken, nickA = nickA, nickB = nickB,
-        avatar = MyAvatar(), level = zooCount + 1, zoo = zooCount, zooTotal = Zoo.Length,
+        frame = cosFr, avatar = MyAvatar(), level = zooCount + 1, zoo = zooCount, zooTotal = Zoo.Length,
         score = score, gems = gems, bestEgg = BestLevel(), online = online,
     };
 
