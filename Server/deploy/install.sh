@@ -192,6 +192,7 @@ echo
 echo " Впишите эту строку в Assets/Resources/server_url.txt и пересоберите игру."
 echo
 echo " Страница администратора: https://$DOMAIN/admin"
+echo " Обновления игры:         https://$DOMAIN/admin/releases"
 echo " Пароль администратора:   $ADMIN_PW"
 echo " (хранится в /etc/hatchmerge.env — там же его можно заменить, затем: systemctl restart hatchmerge)"
 if grep -q '^HATCHMERGE_SMTP_HOST=' /etc/hatchmerge.env; then

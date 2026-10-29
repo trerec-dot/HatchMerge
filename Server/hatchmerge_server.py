@@ -24,6 +24,10 @@ API (JSON):
   POST /api/friends/list        {"id","token"}                -> {"ok","friends":[игрок + "mutual"]}
   POST /api/friends/add         {"id","token","friend"}       -> {"ok"}
   POST /api/friends/remove      {"id","token","friend"}       -> {"ok"}
+  GET  /api/update               -> {"ok","versionCode","versionName","notes","force","url","size","sha256"}
+  GET  /download/<файл>.apk      -> APK последней (или одной из прошлых) версии
+  POST /api/admin/release?...    тело — APK; доступ: заголовок Authorization: Bearer <пароль администратора>
+                                 или сессия админки + заголовок X-CSRF. Параметры: versionCode, versionName, notes, force
   POST /api/grants/ack           {"id","token","ids":[...]}    -> {"ok"}   подарки администратора получены
   Ответ /api/status содержит "grants" — начисления/списания от администратора, ещё не полученные игрой.
   Заблокированный игрок получает 403 {"error":"banned","reason":...}.
@@ -33,6 +37,9 @@ API (JSON):
 import hashlib
 import hmac
 import html
+import struct
+import tempfile
+import zipfile
 import smtplib
 import ssl
 from email.message import EmailMessage
@@ -58,6 +65,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 #   HATCHMERGE_LIST=0       не показывать список игроков на главной странице (для интернета)
 #   HATCHMERGE_SMTP_HOST, HATCHMERGE_SMTP_PORT, HATCHMERGE_SMTP_USER, HATCHMERGE_SMTP_PASSWORD,
 #   HATCHMERGE_SMTP_FROM    почтовый ящик для писем с кодом сброса пароля (без них сброс — только через /admin)
+#   HATCHMERGE_RELEASES     папка для APK-обновлений (по умолчанию — releases рядом с базой)
 #   HATCHMERGE_ADMIN_PASSWORD  пароль страницы администратора /admin
 #                           (на VPS задаётся в /etc/hatchmerge.env; без пароля /admin открыт только
 #                           при запуске на своём ПК, а за Caddy — выключен)
@@ -85,6 +93,9 @@ MAX_SAVE = 8192
 MAX_FRIENDS = 100            # размер сохранения игры, байт
 PBKDF2_ROUNDS = 200_000
 DB_PATH = os.environ.get("HATCHMERGE_DB") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "hatchmerge.db")
+RELEASES_DIR = os.environ.get("HATCHMERGE_RELEASES") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "releases")
+MAX_APK = 400 * 1024 * 1024
+KEEP_RELEASES = 3
 
 NICK_A = ["Весёлый", "Смелый", "Быстрый", "Хитрый", "Добрый", "Сонный", "Звёздный", "Солнечный",
           "Пушистый", "Ловкий", "Храбрый", "Шустрый", "Радужный", "Мятный", "Ягодный", "Облачный"]
@@ -309,6 +320,87 @@ def admin_shell(title, body, refresh=0):
 <main>{body}</main></html>"""
 
 
+# ---------------------------------------------------------------- обновления (APK)
+
+_release_lock = threading.Lock()
+
+
+def releases_load():
+    try:
+        with open(os.path.join(RELEASES_DIR, "releases.json"), encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def releases_save(items):
+    os.makedirs(RELEASES_DIR, exist_ok=True)
+    tmp = os.path.join(RELEASES_DIR, "releases.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, os.path.join(RELEASES_DIR, "releases.json"))
+
+
+def latest_release():
+    items = releases_load()
+    return max(items, key=lambda r: r.get("versionCode", 0)) if items else None
+
+
+def apk_versions(path):
+    """Достать versionCode и versionName из AndroidManifest.xml внутри APK (двоичный XML Android)."""
+    with zipfile.ZipFile(path) as z:
+        data = z.read("AndroidManifest.xml")
+    if struct.unpack_from("<H", data, 0)[0] != 0x0003:
+        raise ValueError("not a binary manifest")
+    pos = struct.unpack_from("<H", data, 2)[0]
+    strings, res_ids = [], []
+    while pos + 8 <= len(data):
+        ctype, hsize, csize = struct.unpack_from("<HHI", data, pos)
+        if csize < 8:
+            break
+        if ctype == 0x0001:                                   # пул строк
+            count, _styles, flags, sstart = struct.unpack_from("<IIII", data, pos + 8)
+            utf8 = bool(flags & 0x100)
+            offs = struct.unpack_from(f"<{count}I", data, pos + hsize)
+            base = pos + sstart
+            for o in offs:
+                p = base + o
+                if utf8:
+                    n = data[p]; p += 2 if n & 0x80 else 1            # длина в символах
+                    n = data[p]
+                    if n & 0x80:
+                        n = ((n & 0x7F) << 8) | data[p + 1]; p += 2
+                    else:
+                        p += 1
+                    strings.append(data[p:p + n].decode("utf-8", "replace"))
+                else:
+                    n = struct.unpack_from("<H", data, p)[0]; p += 2
+                    if n & 0x8000:
+                        n = ((n & 0x7FFF) << 16) | struct.unpack_from("<H", data, p)[0]; p += 2
+                    strings.append(data[p:p + n * 2].decode("utf-16-le", "replace"))
+        elif ctype == 0x0180:                                 # карта id ресурсов атрибутов
+            res_ids = list(struct.unpack_from(f"<{(csize - hsize) // 4}I", data, pos + hsize))
+        elif ctype == 0x0102:                                 # начало элемента
+            name_idx = struct.unpack_from("<i", data, pos + 20)[0]
+            astart, asize, acount = struct.unpack_from("<HHH", data, pos + 24)
+            if 0 <= name_idx < len(strings) and strings[name_idx] == "manifest":
+                code, vname = None, None
+                for k in range(acount):
+                    a = pos + 16 + astart + k * asize
+                    an, raw = struct.unpack_from("<iI", data, a + 4)
+                    dtype, dval = data[a + 15], struct.unpack_from("<I", data, a + 16)[0]
+                    rid = res_ids[an] if 0 <= an < len(res_ids) else 0
+                    aname = strings[an] if 0 <= an < len(strings) else ""
+                    if rid == 0x0101021B or aname == "versionCode":
+                        code = dval
+                    elif rid == 0x0101021C or aname == "versionName":
+                        vname = strings[raw] if raw < len(strings) else (strings[dval] if dtype == 3 and dval < len(strings) else None)
+                return code, vname
+        pos += csize
+    raise ValueError("manifest element not found")
+
+
 def smtp_enabled():
     return bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD)
 
@@ -466,6 +558,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(404, {"ok": True, "found": False})
             return self.send_json(200, {**player_json(row, time.time()), "friends": cnt})
 
+        if path == "/api/update":
+            r = latest_release()
+            if not r:
+                return self.send_json(200, {"ok": True, "versionCode": 0})
+            return self.send_json(200, {"ok": True, "versionCode": r["versionCode"], "versionName": r.get("versionName", ""),
+                                        "notes": r.get("notes", ""), "force": bool(r.get("force")),
+                                        "url": "/download/" + r["file"], "size": r.get("size", 0), "sha256": r.get("sha256", "")})
+        m = re.fullmatch(r"/download/(hatchmerge-\d+\.apk)", path)
+        if m:
+            return self.send_apk(m.group(1))
+        if path == "/admin/releases":
+            return self.admin_releases() if self.admin_ok() else self.redirect("/admin")
+
         if path == "":
             return self.send_page()
         if path == "/admin":
@@ -478,6 +583,8 @@ class Handler(BaseHTTPRequestHandler):
     # ---- POST
     def do_POST(self):
         path = self.path.split("?", 1)[0].rstrip("/")
+        if path == "/api/admin/release":
+            return self.upload_release()
         if path == "/admin/login":
             return self.admin_login()
         if path == "/admin/logout":
@@ -866,6 +973,7 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
 <div class=card><b>{total}</b>игроков</div><div class=card><b>{online}</b>сейчас в сети</div>
 <div class=card><b>{accounts}</b>с аккаунтом</div><div class=card><b>{today}</b>новых за сутки</div>
 <div class=card><b>{banned}</b>заблокировано</div></div>
+<p><a href="/admin/releases">Обновления игры →</a></p>
 <form class=search><input name=q value="{html.escape(q)}" placeholder="Поиск: ID, почта или имя"><button>Найти</button>
 {'<a href="/admin">сбросить</a>' if q else ''}</form>
 <div class=wrap><table><tr><th>ID</th><th>Имя</th><th>Почта</th><th>Статус</th><th>Уровень</th><th>Животные</th>
@@ -959,6 +1067,147 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
         return f"""<div class=cols style="margin-top:16px">
 <div class=card><h3>Друзья игрока ({len(mine)})</h3><p class=muted>Кого этот игрок добавил в друзья.</p>{table(mine)}</div>
 <div class=card><h3>Добавили его в друзья ({len(back)})</h3><p class=muted>Кто добавил этого игрока.</p>{table(back)}</div></div>"""
+
+    # ================================================================ обновления
+    def send_apk(self, name):
+        path = os.path.join(RELEASES_DIR, name)
+        if not os.path.isfile(path):
+            return self.send_json(404, {"ok": False, "error": "not_found"})
+        size = os.path.getsize(path)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.android.package-archive")
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.end_headers()
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(256 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+
+    def release_auth(self):
+        """Загрузка обновления: пароль администратора в заголовке или вход в админку + токен формы."""
+        bearer = self.headers.get("Authorization", "")
+        if bearer.startswith("Bearer ") and ADMIN_PASSWORD:
+            if not admin_login_limit.allow(self.client_ip()):
+                return False
+            return secrets.compare_digest(bearer[7:].encode("utf-8"), ADMIN_PASSWORD.encode("utf-8"))
+        return self.admin_ok() and secrets.compare_digest(self.headers.get("X-CSRF", "").encode(), self.admin_csrf().encode())
+
+    def upload_release(self):
+        if not self.release_auth():
+            return self.send_json(403, {"ok": False, "error": "forbidden"})
+        length = clamp_int(self.headers.get("Content-Length"), 0, MAX_APK + 1, 0)
+        if length <= 0 or length > MAX_APK:
+            return self.send_json(400, {"ok": False, "error": "bad_size"})
+        q = {k: v[0] for k, v in parse_qs(self.path.partition("?")[2]).items()}
+        os.makedirs(RELEASES_DIR, exist_ok=True)
+
+        # принимаем файл кусками во временный файл и сразу считаем контрольную сумму
+        digest = hashlib.sha256()
+        fd, tmp = tempfile.mkstemp(dir=RELEASES_DIR, suffix=".part")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                left = length
+                while left > 0:
+                    chunk = self.rfile.read(min(1024 * 1024, left))
+                    if not chunk:
+                        raise ValueError("connection closed")
+                    f.write(chunk); digest.update(chunk); left -= len(chunk)
+            if not zipfile.is_zipfile(tmp):
+                raise ValueError("not_apk")
+            # номер сборки: из запроса (так присылает Unity), иначе — из самого APK
+            code = clamp_int(q.get("versionCode"), 1, 2_000_000_000, 0) or None
+            vname = None
+            if code is None:
+                try:
+                    code, vname = apk_versions(tmp)
+                except (ValueError, KeyError, zipfile.BadZipFile, struct.error, IndexError):
+                    code = None
+            if not code:
+                raise ValueError("no_version_code")
+            vname = (q.get("versionName") or vname or str(code))[:40]
+
+            with _release_lock:
+                items = releases_load()
+                newest = max((r.get("versionCode", 0) for r in items), default=0)
+                if code <= newest:
+                    raise ValueError(f"old_version:{newest}")
+                name = f"hatchmerge-{code}.apk"
+                os.replace(tmp, os.path.join(RELEASES_DIR, name))
+                items.append({"versionCode": code, "versionName": vname, "file": name, "size": length,
+                              "sha256": digest.hexdigest(), "notes": q.get("notes", "")[:500],
+                              "force": q.get("force", "") in ("1", "true", "on"), "published": time.time()})
+                items.sort(key=lambda r: r["versionCode"])
+                for old in items[:-KEEP_RELEASES]:                     # храним только последние версии
+                    try:
+                        os.remove(os.path.join(RELEASES_DIR, old["file"]))
+                    except OSError:
+                        pass
+                items = items[-KEEP_RELEASES:]
+                releases_save(items)
+            with _db_lock:
+                admin_log(self.client_ip(), "-", "Обновление игры", f"версия {vname} (сборка {code}), {length // 1024 // 1024} МБ")
+                _db.commit()
+            print(f"{time.strftime('%H:%M:%S')}  опубликовано обновление {vname} (сборка {code})")
+            return self.send_json(200, {"ok": True, "versionCode": code, "versionName": vname})
+        except ValueError as e:
+            err = str(e)
+            msg = (f"Номер сборки должен быть больше {err.split(':')[1]}" if err.startswith("old_version")
+                   else "Это не APK-файл" if err == "not_apk"
+                   else "Не удалось узнать номер сборки — укажите его вручную" if err == "no_version_code"
+                   else "Файл загрузился не полностью")
+            return self.send_json(400, {"ok": False, "error": err.split(":")[0], "message": msg})
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+    def admin_releases(self):
+        items = list(reversed(releases_load()))
+        rows = "".join(
+            f"<tr><td><b>{html.escape(r.get('versionName', ''))}</b></td><td class=n>{r['versionCode']}</td>"
+            f"<td>{fmt_time(r.get('published'))}</td><td class=n>{r.get('size', 0) / 1024 / 1024:.1f} МБ</td>"
+            f"<td>{'обязательное' if r.get('force') else '—'}</td><td>{html.escape(r.get('notes', ''))}</td>"
+            f"<td><a href='/download/{r['file']}'>скачать</a></td></tr>" for r in items)
+        table = (f"<div class=wrap2><table><tr><th>Версия</th><th>Сборка</th><th>Опубликована</th><th>Размер</th>"
+                 f"<th>Тип</th><th>Что нового</th><th></th></tr>{rows}</table></div>") if items else "<p class=muted>Обновлений ещё не было</p>"
+        csrf = html.escape(self.admin_csrf())
+        body = f"""<p><a href="/admin">← ко всем игрокам</a></p>
+<div class=cols><div class=card><h3>Опубликовать обновление</h3>
+<p class=muted>Обычно публикуйте из Unity: меню «Яйца-сюрпризы → Опубликовать обновление».
+Здесь — запасной способ: выберите собранный APK. Номер сборки сервер возьмёт из самого файла.</p>
+<form id=up class=grantf style="grid-template-columns:1fr">
+<label>APK-файл<input type=file id=f accept=".apk" required></label>
+<label>Что нового (увидят игроки)<input id=notes maxlength=500 placeholder="Например: 4 новых животных"></label>
+<label style="flex-direction:row;align-items:center;gap:8px"><input type=checkbox id=force style="min-width:0">
+Обязательное — без кнопки «Позже»</label>
+<button>Загрузить</button><progress id=pr max=100 value=0 style="width:100%;display:none"></progress>
+<p id=msg class=muted></p></form></div>
+<div class=card><h3>Опубликованные версии</h3>{table}
+<p class=muted>Игра при запуске сравнивает свой номер сборки с самым новым здесь и предлагает обновиться.
+Хранятся последние {KEEP_RELEASES} версии.</p></div></div>
+<script>
+document.getElementById('up').onsubmit = function (e) {{
+  e.preventDefault();
+  var f = document.getElementById('f').files[0]; if (!f) return;
+  var q = 'notes=' + encodeURIComponent(document.getElementById('notes').value) +
+          '&force=' + (document.getElementById('force').checked ? 1 : 0);
+  var x = new XMLHttpRequest(), pr = document.getElementById('pr'), msg = document.getElementById('msg');
+  x.open('POST', '/api/admin/release?' + q); x.setRequestHeader('X-CSRF', '{csrf}');
+  x.setRequestHeader('Content-Type', 'application/octet-stream');
+  pr.style.display = 'block'; msg.textContent = 'Загружаем…';
+  x.upload.onprogress = function (ev) {{ if (ev.lengthComputable) pr.value = ev.loaded / ev.total * 100; }};
+  x.onload = function () {{
+    var r = {{}}; try {{ r = JSON.parse(x.responseText); }} catch (err) {{}}
+    if (r.ok) {{ msg.textContent = 'Опубликована версия ' + r.versionName + ' (сборка ' + r.versionCode + ')'; setTimeout(function () {{ location.reload(); }}, 1200); }}
+    else msg.textContent = 'Ошибка: ' + (r.message || r.error || x.status);
+  }};
+  x.onerror = function () {{ msg.textContent = 'Ошибка сети'; }};
+  x.send(f);
+}};
+</script>"""
+        return self.send_html(200, admin_shell("Обновления", body))
 
     def flash(self):
         msg = parse_qs(self.path.partition("?")[2]).get("msg", [""])[0][:200]

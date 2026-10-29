@@ -69,6 +69,7 @@ public partial class MergeGame
         netUrl = PlayerPrefs.GetString("net_url", "");
         InitAccount();
         InitModeration();
+        if (setVerTxt != null) setVerTxt.text = VersionText();
         netStarted = true;
         RefreshNetUi();
         StartCoroutine(NetLoop());
@@ -98,6 +99,9 @@ public partial class MergeGame
                 lastStatus = Time.unscaledTime;
                 yield return SendStatus(true);
             }
+            // обновление игры — один раз за запуск
+            if (netState == NetState.Online && !updateChecked) yield return CheckUpdate(false);
+
             // облачное сохранение — проверяется каждые 3 секунды
             if (netState == NetState.Online && HasAccount) yield return SyncSave();
 

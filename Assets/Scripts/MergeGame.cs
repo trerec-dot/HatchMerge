@@ -80,6 +80,7 @@ public partial class MergeGame : MonoBehaviour
     void Start()
     {
         Application.targetFrameRate = 60;
+        InitVersion();
         LoadAssets();
         score = PlayerPrefs.GetInt("eg_score", 0);
         gems = PlayerPrefs.GetInt("eg_gems", 0);

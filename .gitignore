@@ -21,3 +21,4 @@ Server/__pycache__/
 /[Tt]emp/
 /Backup_before_menu/
 .claude.json
+/Keystore/

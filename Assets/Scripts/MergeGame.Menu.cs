@@ -86,6 +86,7 @@ public partial class MergeGame
         Label(setPanel, "Очки и животные сохраняются автоматически", 12, Muted, TextAnchor.MiddleCenter, 20, 352, 350, 20);
         BuildServerRow(setPanel, 392);
         BuildAccountRow(setPanel, 466);
+        BuildVersionRow(setPanel, 540);
 
         BuildStartMenu();
         BuildPlayers();
@@ -95,6 +96,7 @@ public partial class MergeGame
 
         menuFx = TL(content, 0, 0, 390, 700, "MenuFX");
         BuildBanScreen();              // поверх всего, включая нижнюю панель
+        BuildUpdateUi();               // окно «Доступно обновление» — ещё выше
     }
 
     void MakeSwitch(RectTransform parent, string title, float y, out Image track, out RectTransform knob, System.Action toggle)
