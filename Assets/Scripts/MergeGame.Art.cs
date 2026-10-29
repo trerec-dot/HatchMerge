@@ -10,7 +10,7 @@ public partial class MergeGame
     //  Ассеты из Assets/Resources (если файла нет — используется запасной вариант из кода)
     // ============================================================
     internal static readonly Sprite[] eggLvl = new Sprite[MaxLevel + 1];
-    internal static readonly Sprite[] creatureSpr = new Sprite[8];
+    internal static readonly Sprite[] creatureSpr = new Sprite[12];
     internal static Sprite coinSpr, gemSpr, starSpr;
 
     static void LoadAssets()

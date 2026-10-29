@@ -12,7 +12,7 @@ using UnityEngine.InputSystem;
 
 public partial class MergeGame : MonoBehaviour
 {
-    const int Cols = 5, Rows = 5, MaxLevel = 7, MaxEnergy = 10;
+    const int Cols = 5, Rows = 5, MaxLevel = 11, MaxEnergy = 10;
     const float Pitch = 64f, GridX0 = 39f, GridY0 = 188f, EnergyRegen = 10f;
     static readonly Rect BtnRect = new Rect(20, 604, 206, 56);
 
@@ -29,6 +29,8 @@ public partial class MergeGame : MonoBehaviour
         new Color32(142, 197, 242, 255), new Color32(245, 167, 200, 255),
         new Color32(199, 166, 242, 255), new Color32(255, 201, 120, 255),
         new Color32(255, 140, 120, 255),
+        new Color32(120, 215, 235, 255), new Color32(255, 225, 110, 255),
+        new Color32(175, 230, 140, 255), new Color32(230, 150, 240, 255),
     };
 
     // ---------- Животные ----------
@@ -47,6 +49,10 @@ public partial class MergeGame : MonoBehaviour
         Cr("Совёнок-пончик", 255, 209, 102, 5, 7),
         Cr("Зайка-варежка", 250, 200, 215, 6, 7),
         Cr("Единорожек-пирожок", 190, 160, 240, 7, 7),
+        Cr("Пингвинчик-пломбир", 236, 240, 250, 8, 8),
+        Cr("Ёжик-кексик", 218, 182, 140, 9, 9),
+        Cr("Пандочка-зефирка", 246, 246, 250, 10, 10),
+        Cr("Фениксик-фонарик", 255, 150, 95, 11, 11),
     };
 
     // ---------- Состояние ----------

@@ -67,6 +67,10 @@ public partial class MergeGame
             case 4: Blob(-0.3f, 0.32f, 0.2f, 0.28f, dark, 25); Blob(0.3f, 0.32f, 0.2f, 0.28f, dark, -25); break;
             case 5: Blob(-0.3f, 0.34f, 0.16f, 0.26f, light, 25); Blob(0.3f, 0.34f, 0.16f, 0.26f, light, -25); break;
             case 6: Blob(-0.17f, 0.5f, 0.16f, 0.42f, body); Blob(0.17f, 0.5f, 0.16f, 0.42f, body); break;
+            case 8: Blob(0f, 0.06f, 0.84f, 0.82f, C(74, 86, 130)); Blob(-0.42f, -0.06f, 0.12f, 0.3f, C(74, 86, 130), 25); Blob(0.42f, -0.06f, 0.12f, 0.3f, C(74, 86, 130), -25); break;
+            case 9: for (int k = 0; k < 9; k++) { float a = (200f - k * 25f) * Mathf.Deg2Rad; Blob(Mathf.Cos(a) * 0.4f, Mathf.Sin(a) * 0.4f - 0.04f, 0.16f, 0.16f, C(140, 100, 70)); } break;
+            case 10: Blob(-0.3f, 0.32f, 0.2f, 0.2f, C(66, 58, 80)); Blob(0.3f, 0.32f, 0.2f, 0.2f, C(66, 58, 80)); break;
+            case 11: Blob(0f, 0.5f, 0.14f, 0.3f, C(255, 205, 90)); Blob(-0.14f, 0.44f, 0.11f, 0.24f, C(235, 85, 70), 20); Blob(0.14f, 0.44f, 0.11f, 0.24f, C(235, 85, 70), -20); break;
             default: Blob(0f, 0.5f, 0.1f, 0.32f, C(255, 217, 115)); Blob(-0.28f, 0.34f, 0.18f, 0.18f, dark); Blob(0.28f, 0.34f, 0.18f, 0.18f, dark); break;
         }
 

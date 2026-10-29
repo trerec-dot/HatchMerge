@@ -179,20 +179,20 @@ public partial class MergeGame
         foreach (Transform ch in zooGrid) Destroy(ch.gameObject);
         for (int i = 0; i < Zoo.Length; i++)
         {
-            var card = TL(zooGrid, 20 + (i % 2) * 185, 128 + (i / 2) * 124, 165, 114, "Card");
+            var card = TL(zooGrid, 20 + (i % 3) * 120, 128 + (i / 3) * 124, 110, 114, "Card");
             Round(card, Color.white, 20);
             if (i < zooCount)
             {
-                var cr = MakeCreature(card, i, 52f);
-                cr.anchoredPosition = new Vector2(82.5f, -42f);
-                Label(card, Zoo[i].name, 13, Ink, TextAnchor.MiddleCenter, 0, 80, 165, 26);
+                var cr = MakeCreature(card, i, 50f);
+                cr.anchoredPosition = new Vector2(55f, -40f);
+                WrapLabel(card, Zoo[i].name, 11, Ink, TextAnchor.UpperCenter, 4, 78, 102, 32);
             }
             else
             {
-                var q = TL(card, 54.5f, 16, 56, 56, "Locked");
-                Round(q, C(238, 227, 247), 28);
-                Label(q, "?", 22, Ink, TextAnchor.MiddleCenter, 0, 0, 56, 56);
-                Label(card, "Яйцо уровня " + Zoo[i].target, 13, Muted, TextAnchor.MiddleCenter, 0, 80, 165, 26);
+                var q = TL(card, 29, 16, 52, 52, "Locked");
+                Round(q, C(238, 227, 247), 26);
+                Label(q, "?", 22, Ink, TextAnchor.MiddleCenter, 0, 0, 52, 52);
+                WrapLabel(card, "Яйцо уровня " + Zoo[i].target, 11, Muted, TextAnchor.UpperCenter, 4, 78, 102, 32);
             }
         }
     }

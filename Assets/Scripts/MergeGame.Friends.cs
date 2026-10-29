@@ -387,17 +387,17 @@ public partial class MergeGame
         Label(profZoo, p.zoo + " из " + total, 13, Muted, TextAnchor.MiddleRight, 200, 8, 132, 28);
         for (int i = 0; i < Zoo.Length; i++)
         {
-            float cx = 41 + (i % 4) * 89, cy = 66 + (i / 4) * 52;
+            float cx = 34 + (i % 6) * 56.4f, cy = 64 + (i / 6) * 50;
             if (i < p.zoo)
             {
-                var cr = MakeCreature(profZoo, i, 40f);
+                var cr = MakeCreature(profZoo, i, 34f);
                 cr.anchoredPosition = new Vector2(cx, -cy);
             }
             else
             {
-                var q = TL(profZoo, cx - 18, cy - 18, 36, 36, "Locked");
-                Round(q, C(238, 227, 247), 18);
-                Label(q, "?", 16, Muted, TextAnchor.MiddleCenter, 0, 0, 36, 36);
+                var q = TL(profZoo, cx - 15, cy - 15, 30, 30, "Locked");
+                Round(q, C(238, 227, 247), 15);
+                Label(q, "?", 14, Muted, TextAnchor.MiddleCenter, 0, 0, 30, 30);
             }
         }
     }

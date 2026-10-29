@@ -11,7 +11,8 @@ def mix(a, b, t): return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in ran
 
 # ---------------------------------------------------------------- eggs
 PALETTE = [None, (246, 214, 168), (158, 216, 198), (142, 197, 242), (245, 167, 200),
-           (199, 166, 242), (255, 201, 120), (255, 140, 120)]
+           (199, 166, 242), (255, 201, 120), (255, 140, 120),
+           (120, 215, 235), (255, 225, 110), (175, 230, 140), (230, 150, 240)]
 
 def egg_r(nx, ny):
     k = 1.0 - 0.16 * ny
@@ -59,7 +60,7 @@ def make_egg(level, N=256, ss=3):
     img = Image.fromarray((rgba * 255).astype(np.uint8), "RGBA").resize((N, N), Image.LANCZOS)
     return img
 
-for lv in range(1, 8):
+for lv in range(1, len(PALETTE)):
     make_egg(lv).save(OUT + f"egg_{lv}.png")
 
 # ---------------------------------------------------------------- helpers (PIL, supersampled)
@@ -120,7 +121,9 @@ CREATURES = [
     ("cloud", (142, 197, 242)), ("dragon", (199, 166, 242)), ("jelly", (245, 167, 200)),
     ("fox", (255, 168, 100)), ("cat", (158, 216, 198)), ("owl", (255, 209, 102)),
     ("bunny", (250, 200, 215)), ("unicorn", (190, 160, 240)),
+    ("penguin", (236, 240, 250)), ("hedgehog", (218, 182, 140)), ("panda", (246, 246, 250)), ("phoenix", (255, 150, 95)),
 ]
+NAVY, CHAR, FLAME_R, FLAME_Y = (74, 86, 130), (66, 58, 80), (235, 85, 70), (255, 205, 90)
 
 def creature(idx, N=256):
     kind, body = CREATURES[idx]
@@ -170,6 +173,28 @@ def creature(idx, N=256):
             back.append((shape_mask(n, ell(cx + dx * R, cy + dy * R, rr * R, rr * R)), c))
         for s in (-1, 1):
             back.append((shape_mask(n, poly([(cx + s * 0.35 * R, cy - 0.80 * R), (cx + s * 0.62 * R, cy - 1.18 * R), (cx + s * 0.80 * R, cy - 0.62 * R)])), body))
+
+    elif kind == "penguin":
+        back.append((shape_mask(n, ell(cx, cy - 0.10 * R, 1.06 * R, 1.02 * R)), NAVY))      # тёмная «шапочка» и спинка
+        for s in (-1, 1):
+            back.append((rotated_ellipse_mask(n, cx + s * 0.98 * R, cy + 0.22 * R, 0.16 * R, 0.42 * R, s * 25), NAVY))
+            back.append((shape_mask(n, ell(cx + s * 0.34 * R, cy + 0.98 * R, 0.24 * R, 0.11 * R)), (255, 170, 70)))
+    elif kind == "hedgehog":
+        spike = mix(body, (90, 60, 45), 0.6)
+        for k in range(11):
+            a = math.radians(-200 + k * 22)
+            bx, by = cx + math.cos(a) * 0.82 * R, cy + math.sin(a) * 0.80 * R
+            tx, ty = cx + math.cos(a) * 1.32 * R, cy + math.sin(a) * 1.28 * R
+            px, py = -math.sin(a) * 0.2 * R, math.cos(a) * 0.2 * R
+            back.append((shape_mask(n, poly([(bx - px, by - py), (tx, ty), (bx + px, by + py)])), spike))
+    elif kind == "panda":
+        for s in (-1, 1):
+            back.append((shape_mask(n, ell(cx + s * 0.66 * R, cy - 0.74 * R, 0.30 * R, 0.30 * R)), CHAR))
+    elif kind == "phoenix":
+        for (dx, h, w, c, rot) in [(-0.30, 1.30, 0.20, FLAME_R, 18), (0.30, 1.30, 0.20, FLAME_R, -18), (0.0, 1.50, 0.24, FLAME_Y, 0)]:
+            back.append((rotated_ellipse_mask(n, cx + dx * R, cy - (h - 0.25) * R, w * R, 0.42 * R, rot), c))
+        for s in (-1, 1):
+            back.append((rotated_ellipse_mask(n, cx + s * 1.0 * R, cy + 0.05 * R, 0.18 * R, 0.46 * R, s * 40), FLAME_Y))
 
     # ground shadow
     sh = shape_mask(n, ell(cx, cy + R * 1.02, R * 0.8, R * 0.14)).filter(ImageFilter.GaussianBlur(n * 0.012))
@@ -231,6 +256,20 @@ def creature(idx, N=256):
             ImageDraw.Draw(m).line([(cx - 0.1 * R, y + 0.04 * R), (cx + 0.1 * R, y - 0.04 * R)], fill=255, width=int(0.03 * R))
             paint(img, m, (220, 160, 60), 200)
 
+    if kind == "penguin":
+        paint(img, shape_mask(n, poly([(cx - 0.12 * R, cy + 0.10 * R), (cx + 0.12 * R, cy + 0.10 * R), (cx, cy + 0.30 * R)])), (255, 170, 70))
+    if kind == "hedgehog":
+        paint(img, shape_mask(n, ell(cx, cy + 0.12 * R, 0.62 * R, 0.52 * R)), (250, 232, 205))
+        paint(img, shape_mask(n, ell(cx, cy + 0.12 * R, 0.07 * R, 0.055 * R)), INK)
+    if kind == "panda":
+        for s in (-1, 1):
+            paint(img, rotated_ellipse_mask(n, cx + s * 0.34 * R, cy - 0.02 * R, 0.19 * R, 0.25 * R, -s * 25), CHAR)
+            paint(img, shape_mask(n, ell(cx + s * 0.62 * R, cy + 0.62 * R, 0.24 * R, 0.30 * R)), CHAR)
+    if kind == "phoenix":
+        paint(img, shape_mask(n, poly([(cx - 0.11 * R, cy + 0.10 * R), (cx + 0.11 * R, cy + 0.10 * R), (cx, cy + 0.28 * R)])), (255, 200, 80))
+        for (dx, dy, rr) in [(-0.6, -0.5, 0.05), (0.55, -0.6, 0.04), (0.2, -0.75, 0.035)]:
+            paint(img, shape_mask(n, ell(cx + dx * R, cy + dy * R, rr * R, rr * R)), (255, 240, 170), 180)
+
     # face
     ey = cy - 0.02 * R
     for s in (-1, 1):
@@ -241,7 +280,7 @@ def creature(idx, N=256):
         paint(img, shape_mask(n, ell(cx + s * 0.58 * R, cy + 0.20 * R, 0.13 * R, 0.08 * R)), (245, 120, 150), 120)
     m = Image.new("L", (n, n), 0)
     ImageDraw.Draw(m).arc([cx - 0.13 * R, cy + 0.02 * R, cx + 0.13 * R, cy + 0.26 * R], 20, 160, fill=255, width=int(0.045 * R))
-    if kind != "owl": paint(img, m, INK)
+    if kind not in ("owl", "penguin", "phoenix"): paint(img, m, INK)
     return finish(img, N)
 
 for i in range(len(CREATURES)):

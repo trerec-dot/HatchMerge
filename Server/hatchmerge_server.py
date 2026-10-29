@@ -78,7 +78,8 @@ RESET_MAX_ATTEMPTS = 5
 DISCOVERY_PORT = 47777
 ONLINE_WINDOW = 70          # секунд без сообщений, после которых игрок считается «не в сети»
 NICK_A_COUNT = NICK_B_COUNT = 16
-ZOO_MAX = 8
+ZOO_MAX = 12
+MAX_LEVEL = 11
 MAX_BODY = 16384
 MAX_SAVE = 8192
 MAX_FRIENDS = 100            # размер сохранения игры, байт
@@ -239,8 +240,10 @@ def valid_save(value):
 
 
 ZOO_NAMES = ["Облачко-пушистик", "Дракончик-тапок", "Медузка-шарик", "Лисёнок-носок",
-             "Котик-клубочек", "Совёнок-пончик", "Зайка-варежка", "Единорожек-пирожок"]
-EGG_COLORS = ["", "#f6d6a8", "#9ed8c6", "#8ec5f2", "#f5a7c8", "#c7a6f2", "#ffc978", "#ff8c78"]
+             "Котик-клубочек", "Совёнок-пончик", "Зайка-варежка", "Единорожек-пирожок",
+             "Пингвинчик-пломбир", "Ёжик-кексик", "Пандочка-зефирка", "Фениксик-фонарик"]
+EGG_COLORS = ["", "#f6d6a8", "#9ed8c6", "#8ec5f2", "#f5a7c8", "#c7a6f2", "#ffc978", "#ff8c78",
+              "#78d7eb", "#ffe16e", "#afe68c", "#e696f0"]
 
 
 def fmt_time(ts):
@@ -516,7 +519,7 @@ class Handler(BaseHTTPRequestHandler):
                     "avatar": ("avatar", -1, ZOO_MAX - 1), "level": ("level", 1, ZOO_MAX + 1),
                     "zoo": ("zoo", 0, ZOO_MAX), "zooTotal": ("zoo_total", 1, ZOO_MAX),
                     "score": ("score", 0, 2_000_000_000), "gems": ("gems", 0, 1_000_000),
-                    "bestEgg": ("best_egg", 0, 7),
+                    "bestEgg": ("best_egg", 0, MAX_LEVEL),
                 }
                 sets, values = ["online=?", "last_seen=?"], [1 if body.get("online", True) else 0, time.time()]
                 for key, (col, lo, hi) in fields.items():
@@ -908,7 +911,7 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
             cells = ""
             for i in range(25):
                 lvl = grid[i] if i < len(grid) and isinstance(grid[i], int) else 0
-                color = EGG_COLORS[lvl] if 1 <= lvl <= 7 else "transparent"
+                color = EGG_COLORS[lvl] if 1 <= lvl <= MAX_LEVEL else "transparent"
                 cells += f"<div class=cell style='background:{color}'>{lvl or ''}</div>"
             onoff = lambda v: "вкл" if v else "выкл"
             save_html = "".join([

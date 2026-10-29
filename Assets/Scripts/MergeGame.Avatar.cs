@@ -16,10 +16,11 @@ public partial class MergeGame
     int avatarReturnTab = TabStart;
 
     RectTransform avatarPanel;
-    readonly RectTransform[] avCells = new RectTransform[9];
-    readonly RectTransform[] avHolders = new RectTransform[9];
-    readonly Image[] avBg = new Image[9];
-    readonly Text[] avName = new Text[9];
+    const int AvatarCells = 13;          // яйцо + 12 животных
+    readonly RectTransform[] avCells = new RectTransform[AvatarCells];
+    readonly RectTransform[] avHolders = new RectTransform[AvatarCells];
+    readonly Image[] avBg = new Image[AvatarCells];
+    readonly Text[] avName = new Text[AvatarCells];
     Image avAutoImg;
     Text avAutoTxt, avMsg;
 
@@ -43,23 +44,23 @@ public partial class MergeGame
         WrapLabel(avatarPanel, "Новые животные из зоопарка становятся доступны, когда вылупятся",
             13, Muted, TextAnchor.UpperLeft, 20, 150, 350, 36);
 
-        for (int i = 0; i < 9; i++)
+        for (int i = 0; i < AvatarCells; i++)
         {
-            int opt = i - 1;                      // -1 — яйцо, 0..7 — животные
-            float x = 20 + (i % 3) * 120, y = 192 + (i / 3) * 122;
-            var cell = TL(avatarPanel, x, y, 110, 114, "Avatar");
-            avBg[i] = Round(cell, Color.white, 22);
-            avHolders[i] = TL(cell, 0, 0, 110, 80, "Pic");
-            avName[i] = WrapLabel(cell, "", 11, Ink, TextAnchor.UpperCenter, 4, 80, 102, 32);
+            int opt = i - 1;                      // -1 — яйцо, 0..11 — животные
+            float x = 20 + (i % 4) * 89, y = 190 + (i / 4) * 92;
+            var cell = TL(avatarPanel, x, y, 83, 86, "Avatar");
+            avBg[i] = Round(cell, Color.white, 18);
+            avHolders[i] = TL(cell, 0, 0, 83, 58, "Pic");
+            avName[i] = WrapLabel(cell, "", 9, Ink, TextAnchor.UpperCenter, 2, 58, 79, 28);
             avCells[i] = cell;
             AddBtn(cell, () => ChooseAvatar(opt), TabAvatar);
         }
 
-        var auto = TL(avatarPanel, 20, 562, 350, 46, "Auto");
+        var auto = TL(avatarPanel, 20, 562, 350, 44, "Auto");
         avAutoImg = Round(auto, Color.white, 23);
         avAutoTxt = Label(auto, "Авто: последнее открытое животное", 14, Ink, TextAnchor.MiddleCenter, 0, 0, 350, 46);
         AddBtn(auto, () => ChooseAvatar(AvatarAuto), TabAvatar);
-        avMsg = Label(avatarPanel, "", 13, Muted, TextAnchor.MiddleCenter, 20, 612, 350, 24);
+        avMsg = Label(avatarPanel, "", 13, Muted, TextAnchor.MiddleCenter, 20, 610, 350, 24);
     }
 
     void OpenAvatarPicker()
@@ -75,7 +76,7 @@ public partial class MergeGame
     {
         if (avatarPanel == null) return;
         int current = MyAvatar();
-        for (int i = 0; i < 9; i++)
+        for (int i = 0; i < AvatarCells; i++)
         {
             int opt = i - 1;
             bool open = opt == AvatarEgg || opt < zooCount;
@@ -85,22 +86,22 @@ public partial class MergeGame
             foreach (Transform ch in avHolders[i]) Destroy(ch.gameObject);
             if (open)
             {
-                DrawAvatar(avHolders[i], opt, 56f, new Vector2(55, 44));
+                DrawAvatar(avHolders[i], opt, 40f, new Vector2(41.5f, 31));
                 avName[i].text = opt == AvatarEgg ? "Яйцо" : Zoo[opt].name;
                 avName[i].color = Ink;
             }
             else
             {
-                var q = TL(avHolders[i], 33, 18, 44, 44, "Locked");
-                Round(q, C(238, 227, 247), 22);
-                Label(q, "?", 20, Muted, TextAnchor.MiddleCenter, 0, 0, 44, 44);
+                var q = TL(avHolders[i], 25.5f, 13, 32, 32, "Locked");
+                Round(q, C(238, 227, 247), 16);
+                Label(q, "?", 16, Muted, TextAnchor.MiddleCenter, 0, 0, 32, 32);
                 avName[i].text = "Яйцо уровня " + Zoo[opt].target;
                 avName[i].color = Muted;
             }
             if (sel)
             {
                 // отметка выбранного
-                var mark = TL(avHolders[i], 82, 6, 22, 22, "Sel");
+                var mark = TL(avHolders[i], 60, 5, 18, 18, "Sel");
                 AddImg(mark, circleSpr, C(110, 200, 160));
                 AddImg(CC(mark, 0, 0, 8, 8, "Dot"), circleSpr, Color.white);
             }
