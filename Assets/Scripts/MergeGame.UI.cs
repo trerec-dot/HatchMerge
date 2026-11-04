@@ -134,6 +134,8 @@ public partial class MergeGame
                 Round(TL(slot, 0, 3, 56, 53, "In"), C(255, 239, 214), 16);
             }
 
+        BuildIceLayer();               // лёд над клетками (MergeGame.Board.cs)
+
         // --- зоопарк ---
         var zc = TL(content, 20, 530, 350, 60, "ZooCard");
         Round(zc, Color.white, 24);
@@ -198,7 +200,9 @@ public partial class MergeGame
 
     bool HasEmpty()
     {
-        foreach (var e in grid) if (e == null) return true;
+        for (int c = 0; c < Cols; c++)
+            for (int r = 0; r < Rows; r++)
+                if (CellFree(c, r)) return true;
         return false;
     }
 

@@ -24,7 +24,14 @@ class GameSave
     public int avatar;          // выбранный аватар + 2 (0 — в старых сохранениях, значит «авто»)
     public string bg, ui, fr;   // надетое оформление (null — в старых сохранениях)
     public bool music, sfx;
-    public int[] grid;
+    public int[] grid;          // коды клеток (см. MergeGame.Board.cs)
+    // ниже — с версии 2 (в старых сохранениях их нет: массивы null, числа 0)
+    public int[] ice;           // лёд на клетках (прочность 0–2)
+    public long chest;          // когда можно открыть сундук бесплатно
+    public int dLast, dStreak, dSpin, qDay;
+    public int[] qIdx, qProg, qDone;
+    public long[] care;         // когда кормили каждое животное
+    public int[] zvar;          // окраски животных
 }
 
 [Serializable] class NetAccountReq { public string id, token, email, password; }
@@ -100,15 +107,15 @@ public partial class MergeGame
     GameSave MakeSave()
     {
         var g = new int[Cols * Rows];
-        for (int i = 0; i < g.Length; i++)
-        {
-            var e = grid[i % Cols, i / Cols];
-            g[i] = e != null ? e.level : 0;
-        }
+        for (int i = 0; i < g.Length; i++) g[i] = CodeOf(grid[i % Cols, i / Cols]);
         return new GameSave
         {
-            v = 1, score = score, gems = gems, zoo = zooCount, energy = energy,
+            v = 2, score = score, gems = gems, zoo = zooCount, energy = energy,
             music = GameAudio.MusicOn, sfx = GameAudio.SfxOn, grid = g, avatar = avatarSel + 2, bg = cosBg, ui = cosUi, fr = cosFr,
+            ice = IceArray(), chest = chestAt,
+            dLast = dayLast, dStreak = dayStreak, dSpin = spinDay, qDay = questDay,
+            qIdx = (int[])qIdx.Clone(), qProg = (int[])qProg.Clone(), qDone = (int[])qDone.Clone(),
+            care = (long[])careAt.Clone(), zvar = (int[])zooVar.Clone(),
         };
     }
 
@@ -140,8 +147,25 @@ public partial class MergeGame
         bool any = false;
         if (s.grid != null && s.grid.Length == Cols * Rows)
             for (int i = 0; i < s.grid.Length; i++)
-                if (s.grid[i] >= 1 && s.grid[i] <= MaxLevel) { Spawn(i % Cols, i / Cols, s.grid[i]); any = true; }
+                if (SpawnCode(i % Cols, i / Cols, s.grid[i])) any = true;
         if (!any) Seed();
+        else SetIceArray(s.ice);
+        chestAt = s.chest;
+        PlayerPrefs.SetString("eg_chest_at", chestAt.ToString());
+
+        // ежедневные награды, уход и окраски (в старых сохранениях их нет — остаются как есть)
+        if (s.v >= 2)
+        {
+            dayLast = s.dLast; dayStreak = s.dStreak; spinDay = s.dSpin; questDay = s.qDay;
+            CopyInts(s.qIdx, qIdx); CopyInts(s.qProg, qProg); CopyInts(s.qDone, qDone);
+            for (int i = 0; i < qIdx.Length; i++) qIdx[i] = Mathf.Clamp(qIdx[i], 0, QuestPool.Length - 1);
+            EnsureQuests();
+            Array.Clear(careAt, 0, careAt.Length);
+            if (s.care != null) for (int i = 0; i < careAt.Length && i < s.care.Length; i++) careAt[i] = s.care[i];
+            Array.Clear(zooVar, 0, zooVar.Length);
+            if (s.zvar != null) for (int i = 0; i < zooVar.Length && i < s.zvar.Length; i++) zooVar[i] = Mathf.Clamp(s.zvar[i], 0, 2);
+            RefreshGiftDot();
+        }
 
         RefreshAll();
         ApplyToggles();
@@ -150,6 +174,12 @@ public partial class MergeGame
         if (tab == 1) RefreshZooPanel();
         if (tab == TabPlayers) RefreshMyCard();
         return true;
+    }
+
+    static void CopyInts(int[] from, int[] to)
+    {
+        Array.Clear(to, 0, to.Length);
+        if (from != null) for (int i = 0; i < to.Length && i < from.Length; i++) to[i] = from[i];
     }
 
     void CancelDrag()

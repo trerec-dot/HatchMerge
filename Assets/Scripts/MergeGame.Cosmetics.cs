@@ -3,6 +3,7 @@
 // • Монеты списывает игра, а сервер запоминает покупку — с аккаунтом она будет и на другом телефоне.
 // • Рамку аватара видят друзья (она отправляется на сервер вместе со статусом).
 // Список товаров дублируется на сервере (SHOP_ITEMS в hatchmerge_server.py) — id и цены должны совпадать.
+// Предметы с ценой 0 не продаются — это награды альбома (MergeGame.ZooLife.cs).
 
 using System;
 using System.Collections;
@@ -44,7 +45,24 @@ public partial class MergeGame
         Cos("ui_berry", "Ягодный", CosKind.Style, 2500, new Color32(196, 56, 128, 255), Color.white),
         Cos("fr_gold", "Золотая", CosKind.Frame, 1500, new Color32(255, 196, 70, 255), new Color32(255, 236, 160, 255)),
         Cos("fr_rainbow", "Радужная", CosKind.Frame, 4000, Color.white, Color.white),
+        // награды альбома
+        Cos("fr_magic", "Волшебная", CosKind.Frame, 0, new Color32(170, 120, 240, 255), new Color32(236, 222, 255, 255)),
+        Cos("fr_hearts", "Сердечки", CosKind.Frame, 0, new Color32(245, 120, 160, 255), new Color32(255, 226, 236, 255)),
+        Cos("fr_leaf", "Листик", CosKind.Frame, 0, new Color32(110, 190, 100, 255), new Color32(226, 246, 216, 255)),
+        Cos("bg_sea", "Морское дно", CosKind.Background, 0, new Color32(150, 205, 235, 255), new Color32(214, 242, 250, 255)),
+        Cos("bg_sky", "Облака", CosKind.Background, 0, new Color32(186, 222, 252, 255), new Color32(246, 250, 255, 255)),
+        Cos("ui_forest", "Лесной", CosKind.Style, 0, new Color32(56, 150, 84, 255), Color.white),
+        Cos("ui_sunset", "Закат", CosKind.Style, 0, new Color32(226, 104, 56, 255), Color.white),
     };
+
+    // какие предметы показаны в магазине (продаются за монеты)
+    static readonly int[] ShopSlots = BuildShopSlots();
+    static int[] BuildShopSlots()
+    {
+        var l = new List<int>();
+        for (int i = 0; i < CosItems.Length; i++) if (CosItems[i].price > 0) l.Add(i);
+        return l.ToArray();
+    }
 
     static readonly Color DefaultBg = new Color32(255, 243, 224, 255);
     static readonly Color DefaultAccent = new Color32(201, 60, 32, 255);
@@ -152,7 +170,17 @@ public partial class MergeGame
             d.anchorMin = d.anchorMax = new Vector2(x, y);
             float s = 8f + (float)rnd.NextDouble() * 14f;
             d.sizeDelta = new Vector2(s, s);
-            if (id == "bg_stars")
+            if (id == "bg_sky")              // облака — крупные белые пятна вверху
+            {
+                d.anchorMin = d.anchorMax = new Vector2(x, 0.55f + y * 0.45f);
+                d.sizeDelta = new Vector2(s * 4f, s * 2.2f);
+                AddImg(d, circleSpr, new Color(1f, 1f, 1f, 0.7f));
+            }
+            else if (id == "bg_sea")         // пузырьки
+            {
+                AddImg(d, ringSpr != null ? ringSpr : circleSpr, new Color(1f, 1f, 1f, 0.55f));
+            }
+            else if (id == "bg_stars")
             {
                 d.localRotation = Quaternion.Euler(0, 0, (float)rnd.NextDouble() * 90f);
                 AddImg(d, starSpr != null ? starSpr : circleSpr, new Color(1f, 1f, 1f, 0.75f));
@@ -226,11 +254,11 @@ public partial class MergeGame
 
         cosGroup = TL(shopPanel, 0, 0, 390, 700, "Cosmetics");
         cosNote = Label(cosGroup, "", 12, Muted, TextAnchor.MiddleLeft, 20, 118, 350, 20);
-        for (int i = 0; i < CosItems.Length; i++)
+        for (int j = 0; j < ShopSlots.Length; j++)
         {
-            int idx = i;
-            var it = CosItems[i];
-            var card = TL(cosGroup, 20, 146 + i * 70, 350, 62, "Cos");
+            int i = j, idx = ShopSlots[j];
+            var it = CosItems[idx];
+            var card = TL(cosGroup, 20, 146 + j * 70, 350, 62, "Cos");
             Round(card, Color.white, 20);
             var prev = TL(card, 10, 7, 48, 48, "Preview");
             DrawCosPreview(prev, it);
@@ -309,9 +337,9 @@ public partial class MergeGame
     {
         if (cosGroup == null) return;
         cosNote.text = "Оформление за монеты · у вас " + Fmt(score);
-        for (int i = 0; i < CosItems.Length; i++)
+        for (int i = 0; i < ShopSlots.Length; i++)
         {
-            var it = CosItems[i];
+            var it = CosItems[ShopSlots[i]];
             bool owned = cosOwned.Contains(it.id), on = Equipped(it.kind) == it.id;
             bool afford = score >= it.price;
             cosBtnImg[i].color = on ? Ink : owned ? C(238, 227, 247) : afford ? Red : C(216, 201, 190);
@@ -332,6 +360,7 @@ public partial class MergeGame
             return;
         }
         if (shopBusy) return;
+        if (it.price <= 0) { GameAudio.Deny(); Toast("Это награда альбома"); return; }
         if (score < it.price) { GameAudio.Deny(); Toast("Не хватает монет: нужно " + Fmt(it.price)); return; }
         if (netState != NetState.Online) { GameAudio.Deny(); Toast("Нет связи с сервером"); KickNet(); return; }
         StartCoroutine(DoBuy(it.id));

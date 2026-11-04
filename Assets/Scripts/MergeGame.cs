@@ -1,6 +1,7 @@
 // Яйца-сюрпризы — основной класс игры: состояние, запуск, игровой цикл и ввод.
 // Остальные части этого же класса (partial): MergeGame.UI.cs, MergeGame.Menu.cs,
-// MergeGame.Visuals.cs, MergeGame.Art.cs.
+// MergeGame.Visuals.cs, MergeGame.Art.cs, MergeGame.Board.cs (особые яйца, лёд, сундуки),
+// MergeGame.Daily.cs (ежедневные награды), MergeGame.ZooLife.cs (уход, альбом, редкие окраски).
 
 using System.Collections;
 using System.Collections.Generic;
@@ -108,6 +109,38 @@ public partial class MergeGame : MonoBehaviour
 
     void Awake() { inst = this; }
 
+#if UNITY_EDITOR
+    // ---------- для проверки в редакторе (меню «Яйца-сюрпризы → Тест») ----------
+    public static void DebugSpecials()
+    {
+        if (inst == null) return;
+        inst.GiveSpecial(EggKind.Gold, 2); inst.GiveSpecial(EggKind.Normal, 2);
+        inst.GiveSpecial(EggKind.Rainbow); inst.GiveSpecial(EggKind.Bomb);
+        var free = inst.FreeCells();
+        if (free.Count > 0 && !inst.HasChest())
+        {
+            inst.SpawnKind(free[0].x, free[0].y, 0, EggKind.Chest);
+            inst.chestAt = NowUnix() + ChestSeconds;
+        }
+        inst.SetTab(0);
+        inst.AfterMove();
+    }
+
+    public static void DebugChestReady() { if (inst != null) inst.chestAt = NowUnix() - 1; }
+
+    public static void DebugNextDay()
+    {
+        if (inst == null) return;
+        inst.dayLast--; inst.spinDay = 0; inst.questDay = 0;
+        System.Array.Clear(inst.careAt, 0, inst.careAt.Length);
+        inst.EnsureQuests();
+        inst.Save();
+        inst.RefreshGiftDot();
+        if (inst.tab == TabRewards) inst.RefreshRewards();
+        inst.Toast("Тест: наступил следующий день");
+    }
+#endif
+
     void Start()
     {
         Application.targetFrameRate = 60;
@@ -124,7 +157,11 @@ public partial class MergeGame : MonoBehaviour
         BuildUI();
         BuildMenu();
         InitCosmetics();
+        LoadChestTime();
         if (!LoadGrid()) Seed();
+        else SetIce(PlayerPrefs.GetString("eg_ice", ""));
+        InitDaily();
+        InitZooLife();
         RefreshAll();
         tab = TabStart;                // игра начинается со стартового меню
         InitNet();
@@ -149,28 +186,26 @@ public partial class MergeGame : MonoBehaviour
         return e;
     }
 
-    // яйца на поле, сохранённые в прошлый раз (строка из 25 цифр — уровни по строкам)
+    // яйца на поле, сохранённые в прошлый раз (строка из 25 символов — коды клеток по строкам, см. MergeGame.Board.cs)
     bool LoadGrid()
     {
         string g = PlayerPrefs.GetString("eg_grid", "");
         if (g.Length != Cols * Rows) return false;
         bool any = false;
         for (int i = 0; i < g.Length; i++)
-        {
-            int l = g[i] - '0';
-            if (l >= 1 && l <= MaxLevel) { Spawn(i % Cols, i / Cols, l); any = true; }
-        }
+            if (SpawnCode(i % Cols, i / Cols, g[i] - '0')) any = true;
         return any;
     }
 
     void Seed()
     {
+        SeedIce();                     // часть поля подо льдом — растапливается по ходу игры
         Spawn(0, 4, 1); Spawn(1, 4, 1);
         int n = 2, guard = 0;
         while (n < 9 && guard++ < 300)
         {
             int c = Random.Range(0, Cols), r = Random.Range(0, Rows);
-            if (grid[c, r] != null) continue;
+            if (!CellFree(c, r)) continue;
             Spawn(c, r, Random.value < 0.7f ? 1 : 2);
             n++;
         }
@@ -179,15 +214,15 @@ public partial class MergeGame : MonoBehaviour
     void NewEgg()
     {
         if (energy <= 0) { GameAudio.Deny(); return; }
-        var free = new List<Vector2Int>();
-        for (int c = 0; c < Cols; c++)
-            for (int r = 0; r < Rows; r++)
-                if (grid[c, r] == null) free.Add(new Vector2Int(c, r));
+        var free = FreeCells();
         if (free.Count == 0) { GameAudio.Deny(); return; }
         var p = free[Random.Range(0, free.Count)];
-        Spawn(p.x, p.y, Random.value < 0.12f ? 2 : 1);
+        var kind = RollNewEggKind();
+        if (kind == EggKind.Normal) Spawn(p.x, p.y, Random.value < 0.12f ? 2 : 1);
+        else SpawnKind(p.x, p.y, 1, kind);
         GameAudio.Spawn();
         energy--;
+        QuestAdd(QuestKind.Spawn);
         AfterMove();
     }
 
@@ -204,11 +239,11 @@ public partial class MergeGame : MonoBehaviour
         for (int i = 0; i < Cols * Rows; i++)
         {
             var e1 = grid[i % Cols, i / Cols];
-            if (e1 == null || e1.level >= MaxLevel) continue;
+            if (e1 == null || !Mergeable(e1)) continue;
             for (int j = i + 1; j < Cols * Rows; j++)
             {
                 var e2 = grid[j % Cols, j / Cols];
-                if (e2 != null && e2.level == e1.level)
+                if (CanMerge(e1, e2, out _, out _))
                 {
                     a = new Vector2Int(i % Cols, i / Cols);
                     b = new Vector2Int(j % Cols, j / Cols);
@@ -223,8 +258,10 @@ public partial class MergeGame : MonoBehaviour
     void CheckStuck()
     {
         if (dragged != null || HasEmpty() || FindPair(out _, out _)) return;
+        foreach (var e in grid) if (e != null && (e.kind == EggKind.Bomb || (e.kind == EggKind.Chest && ChestLeft() <= 0))) return;
         int minL = 99;
-        foreach (var e in grid) if (e != null) minL = Mathf.Min(minL, e.level);
+        foreach (var e in grid) if (e != null && e.level > 0) minL = Mathf.Min(minL, e.level);
+        if (minL == 99) return;
         for (int c = 0; c < Cols; c++)
             for (int r = 0; r < Rows; r++)
             {
@@ -279,11 +316,13 @@ public partial class MergeGame : MonoBehaviour
         }
 
         if (BackPressed() && tab != TabStart)
-            SetTab(tab == TabProfile ? TabPlayers : tab == TabAvatar ? avatarReturnTab : tab == TabGallery ? 1 : TabStart);
+            SetTab(tab == TabProfile ? TabPlayers : tab == TabAvatar ? avatarReturnTab : tab == TabGallery || tab == TabAlbum ? 1 : TabStart);
         UpdatePlayers(dt);
         UpdateAccount(dt);
         UpdateFriends(dt);
         UpdateGallery(dt);
+        UpdateBoard(dt);
+        UpdateDaily(dt);
 
         // восстановление энергии
         if (energy < MaxEnergy)
@@ -346,7 +385,18 @@ public partial class MergeGame : MonoBehaviour
         if (!ToCell(d, out var t) || t == dragFrom)
         {
             e.home = CellCenter(dragFrom.x, dragFrom.y);
+            // нажатие (без перетаскивания) на бомбочку или сундук
+            if (t == dragFrom && e.kind == EggKind.Bomb) { Explode(t); AfterMove(); return; }
+            if (t == dragFrom && e.kind == EggKind.Chest) { TapChest(t); return; }
             GameAudio.Drop();
+            return;
+        }
+
+        if (ice[t.x, t.y] > 0)          // клетка подо льдом
+        {
+            e.home = CellCenter(dragFrom.x, dragFrom.y);
+            GameAudio.Deny();
+            Toast("Клетка подо льдом. Соединяйте яйца рядом — лёд растает");
             return;
         }
 
@@ -360,21 +410,27 @@ public partial class MergeGame : MonoBehaviour
             grid[t.x, t.y] = e;
             e.home = pos;
         }
-        else if (other.level == e.level && e.level < MaxLevel) // слияние
+        else if (CanMerge(e, other, out int nl, out bool gold)) // слияние (особые яйца — см. MergeGame.Board.cs)
         {
+            bool special = e.kind != EggKind.Normal || other.kind != EggKind.Normal;
             grid[dragFrom.x, dragFrom.y] = null;
             Destroy(e.gameObject);
-            int nl = other.level + 1;
-            other.Setup(nl);
+            other.Setup(nl, EggKind.Normal);
             other.Pop();
 
             combo = (Time.time - lastMerge < 2.5f) ? Mathf.Min(combo + 1, 4) : 1;
             lastMerge = Time.time;
-            int pts = nl * nl * 5 * combo;
+            int pts = nl * nl * 5 * combo * (gold ? 2 : 1);
             score += pts;
-            FloatText("+" + pts + (combo > 1 ? "  x" + combo : ""), pos + new Vector2(0, -30), 20, 160);
-            Burst(pos, Palette[nl], 10);
+            FloatText("+" + pts + (combo > 1 ? "  x" + combo : "") + (gold ? "  золото!" : ""), pos + new Vector2(0, -30), 20, 220);
+            Burst(pos, gold ? C(255, 205, 90) : Palette[nl], gold ? 16 : 10);
             GameAudio.Merge(nl, combo);
+
+            HitIceAround(t);
+            MaybeSpawnChest(nl);
+            QuestAdd(QuestKind.Merge);
+            QuestReach(nl);
+            if (special) QuestAdd(QuestKind.Special);
 
             if (zooCount < Zoo.Length && nl >= Zoo[zooCount].target) Hatch(t);
         }
@@ -399,6 +455,7 @@ public partial class MergeGame : MonoBehaviour
 
         int idx = zooCount;
         zooCount++;
+        int variant = RollRareVariant(idx);       // иногда — редкая окраска
         score += 50;
         gems += 2;
         FloatText("+50", pos + new Vector2(0, -60), 22, 160);
@@ -407,7 +464,8 @@ public partial class MergeGame : MonoBehaviour
 #if UNITY_IOS || UNITY_ANDROID
         if (GameAudio.SfxOn) Handheld.Vibrate();
 #endif
-        StartCoroutine(Reveal(idx, pos));
+        StartCoroutine(Reveal(idx, pos, variant));
+        FreezeRandomCell();
         RefreshTop(); RefreshQuest();
         KickNet();                     // сразу сообщить серверу о новом животном
 
@@ -431,15 +489,16 @@ public partial class MergeGame : MonoBehaviour
         if (best != null) { Hatch(new Vector2Int(bc, br)); AfterMove(); }
     }
 
-    IEnumerator Reveal(int idx, Vector2 pos)
+    IEnumerator Reveal(int idx, Vector2 pos, int variant = 0)
     {
-        var cr = MakeCreature(fxLayer, idx, 110f);
+        var cr = MakeCreature(fxLayer, idx, 110f, variant);
         cr.anchoredPosition = new Vector2(pos.x, -pos.y);
 
         float by = Mathf.Clamp(pos.y + 78f, 120f, 500f);
         var bn = TL(fxLayer, 70, by - 17, 250, 34, "Banner");
         Round(bn, C(59, 42, 74, 0.92f), 17);
-        Label(bn, "Новое животное: " + Zoo[idx].name, 14, Color.white, TextAnchor.MiddleCenter, 0, 0, 250, 34);
+        Label(bn, (variant > 0 ? VariantName[variant] + " окраска! " : "Новое животное: ") + Zoo[idx].name,
+            variant > 0 ? 12 : 14, variant > 0 ? C(255, 220, 120) : Color.white, TextAnchor.MiddleCenter, 0, 0, 250, 34);
         var cgp = bn.gameObject.AddComponent<CanvasGroup>();
 
         float t = 0f;

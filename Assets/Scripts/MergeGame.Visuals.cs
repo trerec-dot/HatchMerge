@@ -16,11 +16,11 @@ public partial class MergeGame
         rt.gameObject.AddComponent<Floater>().Init(t);
     }
 
-    void Burst(Vector2 pos, Color col, int count)
+    void Burst(Vector2 pos, Color col, int count, Transform parent = null)
     {
         for (int i = 0; i < count; i++)
         {
-            var rt = CC(fxLayer, 0, 0, 9, 9, "Spark");
+            var rt = CC(parent != null ? parent : fxLayer, 0, 0, 9, 9, "Spark");
             rt.anchorMin = rt.anchorMax = new Vector2(0, 1);
             rt.anchoredPosition = new Vector2(pos.x, -pos.y);
             bool st = starSpr != null && i % 2 == 0;
@@ -31,23 +31,29 @@ public partial class MergeGame
     }
 
     // ---------- Животное (рисуется кодом из кружков) ----------
-    static RectTransform MakeCreature(Transform parent, int idx, float size)
+    // variant: 0 обычная окраска, 1 золотая, 2 ночная (MergeGame.ZooLife.cs)
+    static RectTransform MakeCreature(Transform parent, int idx, float size, int variant = 0)
     {
         var root = NewRt("Creature", parent);
         root.anchorMin = root.anchorMax = new Vector2(0, 1);
         root.pivot = new Vector2(0.5f, 0.5f);
         root.sizeDelta = new Vector2(size, size);
+        variant = Mathf.Clamp(variant, 0, VariantTint.Length - 1);
+        if (variant > 0)           // сияние позади редкого животного
+            AddImg(CC(root, 0, 0, size * 1.25f, size * 1.25f, "Glow"), circleSpr,
+                variant == 1 ? new Color(1f, 0.85f, 0.4f, 0.45f) : new Color(0.45f, 0.5f, 0.9f, 0.4f));
 
         if (creatureSpr[idx] != null)
         {
             var pic = CC(root, 0, 0, size * 1.3f, size * 1.3f, "Picture");
             pic.anchoredPosition = new Vector2(0, size * 0.06f);
-            AddImg(pic, creatureSpr[idx], Color.white).preserveAspect = true;
+            AddImg(pic, creatureSpr[idx], VariantTint[variant]).preserveAspect = true;
+            if (variant > 0) AddVariantStar(root, size, variant);
             return root;
         }
 
         var z = Zoo[idx];
-        Color body = z.color;
+        Color body = variant == 0 ? z.color : z.color * VariantTint[variant];
         Color dark = Color.Lerp(body, Ink, 0.25f);
         Color light = Color.Lerp(body, Color.white, 0.55f);
 
@@ -80,6 +86,13 @@ public partial class MergeGame
         Blob(0.15f, 0.04f, 0.09f, 0.11f, Ink);
         Blob(-0.27f, -0.09f, 0.12f, 0.08f, C(245, 143, 168, 0.6f)); // щёчки
         Blob(0.27f, -0.09f, 0.12f, 0.08f, C(245, 143, 168, 0.6f));
+        if (variant > 0) AddVariantStar(root, size, variant);
         return root;
+    }
+
+    static void AddVariantStar(RectTransform root, float size, int variant)
+    {
+        var st = CC(root, size * 0.42f, size * 0.42f, size * 0.32f, size * 0.32f, "RareStar");
+        AddImg(st, starSpr != null ? starSpr : circleSpr, variant == 1 ? new Color(1f, 0.78f, 0.15f) : new Color(0.55f, 0.6f, 1f));
     }
 }

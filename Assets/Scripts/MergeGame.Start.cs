@@ -48,23 +48,28 @@ public partial class MergeGame
         startPlayTxt = Label(play, "Играть", 24, Color.white, TextAnchor.MiddleCenter, 0, 0, 350, 66);
         AddBtn(play, () => SetTab(0), TabStart);
 
-        MenuButton("Найти игрока", 428, () => SetTab(TabPlayers));
-        MenuButton("Мой зоопарк", 494, () => SetTab(1));
-        MenuButton("Настройки", 560, () => SetTab(3));
+        var gift = MenuButton("Награды дня", 424, () => SetTab(TabRewards));
+        DrawGiftIcon(CC(gift, -86, 0, 30, 30, "Gift"), 26);
+        startGiftDot = TL(gift, 300, 14, 14, 14, "Dot");
+        AddImg(startGiftDot, circleSpr, C(235, 70, 60));
+        MenuButton("Найти игрока", 478, () => SetTab(TabPlayers));
+        MenuButton("Мой зоопарк", 532, () => SetTab(1));
+        MenuButton("Настройки", 586, () => SetTab(3));
 
 #if !UNITY_IOS && !UNITY_WEBGL
-        var quit = TL(startPanel, 120, 632, 150, 40, "Quit");
+        var quit = TL(startPanel, 120, 640, 150, 40, "Quit");
         Label(quit, "Выход", 15, Muted, TextAnchor.MiddleCenter, 0, 0, 150, 40);
         AddBtn(quit, QuitGame, TabStart);
 #endif
     }
 
-    void MenuButton(string title, float y, System.Action act)
+    RectTransform MenuButton(string title, float y, System.Action act)
     {
-        var b = TL(startPanel, 20, y, 350, 56, "MenuBtn");
-        Round(b, Color.white, 28);
-        Label(b, title, 18, Ink, TextAnchor.MiddleCenter, 0, 0, 350, 56);
+        var b = TL(startPanel, 20, y, 350, 48, "MenuBtn");
+        Round(b, Color.white, 24);
+        Label(b, title, 18, Ink, TextAnchor.MiddleCenter, 0, 0, 350, 48);
         AddBtn(b, act, TabStart);
+        return b;
     }
 
     void RefreshStartMenu()

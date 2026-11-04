@@ -95,6 +95,10 @@ public partial class MergeGame
         BuildAccount();
         BuildAvatarPicker();
         BuildGallery();
+        BuildCareUi();
+        BuildZooButtons();
+        BuildAlbum();
+        BuildDaily();
 
         menuFx = TL(content, 0, 0, 390, 700, "MenuFX");
         BuildBanScreen();              // поверх всего, включая нижнюю панель
@@ -154,6 +158,8 @@ public partial class MergeGame
         profilePanel.gameObject.SetActive(tab == TabProfile);
         avatarPanel.gameObject.SetActive(tab == TabAvatar);
         galleryPanel.gameObject.SetActive(tab == TabGallery);
+        rewardsPanel.gameObject.SetActive(tab == TabRewards);
+        albumPanel.gameObject.SetActive(tab == TabAlbum);
 
         // в стартовом меню прячем нижнюю панель и счётчики сверху
         bool inMenu = tab == TabStart;
@@ -161,6 +167,7 @@ public partial class MergeGame
         levelTxt.gameObject.SetActive(!inMenu);
         coinTxt.transform.parent.gameObject.SetActive(!inMenu);
         gemTxt.transform.parent.gameObject.SetActive(!inMenu);
+        giftBtn.gameObject.SetActive(!inMenu && tab != TabRewards);
 
         if (tab == 1) RefreshZooPanel();
         if (tab == TabStart) RefreshStartMenu();
@@ -169,10 +176,13 @@ public partial class MergeGame
         if (tab == TabProfile) { profileT = 0f; RefreshProfile(); }
         if (tab == TabAvatar) RefreshAvatarPicker();
         if (tab == TabGallery) ShowGalleryCreature();
+        if (tab == TabRewards) RefreshRewards();
+        if (tab == TabAlbum) RefreshAlbum();
+        if (tab == TabProfile) QuestAdd(QuestKind.Visit);
         for (int k = 0; k < NavTabs.Length; k++)
         {
             bool sel = NavTabs[k] == tab || (tab == TabProfile && NavTabs[k] == TabPlayers)
-                       || (tab == TabGallery && NavTabs[k] == 1);
+                       || ((tab == TabGallery || tab == TabAlbum) && NavTabs[k] == 1);
             tabImg[k].color = sel ? Ink : Color.white;
             tabTxt[k].color = sel ? Color.white : Ink;
         }
@@ -191,9 +201,15 @@ public partial class MergeGame
             Round(card, Color.white, 20);
             if (i < zooCount)
             {
-                var cr = MakeCreature(card, i, 50f);
+                var cr = MakeCreature(card, i, 50f, zooVar[i]);
                 cr.anchoredPosition = new Vector2(55f, -40f);
-                WrapLabel(card, Zoo[i].name, 11, Ink, TextAnchor.UpperCenter, 4, 78, 102, 32);
+                WrapLabel(card, Zoo[i].name, 11, zooVar[i] > 0 ? C(190, 130, 20) : Ink, TextAnchor.UpperCenter, 4, 78, 102, 32);
+                if (CanFeed(i))            // голоден — монетка в углу
+                {
+                    var hb = TL(card, 82, 6, 22, 22, "Hungry");
+                    AddImg(hb, circleSpr, Color.white);
+                    CoinIcon(hb, 0, 0, 18);
+                }
             }
             else
             {
@@ -203,6 +219,7 @@ public partial class MergeGame
                 WrapLabel(card, "Яйцо уровня " + Zoo[i].target, 11, Muted, TextAnchor.UpperCenter, 4, 78, 102, 32);
             }
         }
+        RefreshZooButtons();
     }
 
     // ---------- Страницы зоопарка ----------
@@ -235,11 +252,38 @@ public partial class MergeGame
         var l = new List<Vector2Int>();
         for (int c = 0; c < Cols; c++)
             for (int r = 0; r < Rows; r++)
-                if (grid[c, r] == null) l.Add(new Vector2Int(c, r));
+                if (CellFree(c, r)) l.Add(new Vector2Int(c, r));
         return l;
     }
 
-    void Toast(string s) { FloatText(s, new Vector2(195, 470), 17, 320, menuFx); }
+    // подсказка внизу экрана: тёмная плашка с текстом, держится 2,5 секунды (одна за раз)
+    RectTransform toastRt;
+    CanvasGroup toastCg;
+    float toastT;
+
+    void Toast(string s)
+    {
+        if (toastRt != null) Destroy(toastRt.gameObject);
+        toastRt = TL(menuFx, 24, 446, 342, 48, "Toast");
+        Round(toastRt, C(59, 42, 74, 0.94f), 24);
+        var t = WrapLabel(toastRt, s, 15, Color.white, TextAnchor.MiddleCenter, 14, 0, 314, 48);
+        t.verticalOverflow = VerticalWrapMode.Truncate;
+        t.resizeTextForBestFit = true;
+        t.resizeTextMinSize = 10;
+        t.resizeTextMaxSize = 15;
+        toastCg = toastRt.gameObject.AddComponent<CanvasGroup>();
+        toastCg.blocksRaycasts = false;
+        toastT = 2.5f;
+    }
+
+    void UpdateToast(float dt)
+    {
+        if (toastRt == null) return;
+        toastT -= dt;
+        toastCg.alpha = Mathf.Clamp01(toastT / 0.4f);
+        toastRt.localScale = Vector3.one * (1f + 0.06f * Mathf.Clamp01((toastT - 2.3f) / 0.2f));
+        if (toastT <= 0f) { Destroy(toastRt.gameObject); toastRt = null; }
+    }
 
     void Buy(int i)
     {
@@ -290,6 +334,8 @@ public partial class MergeGame
         ClearHint();
         foreach (var e in grid) if (e != null) Destroy(e.gameObject);
         System.Array.Clear(grid, 0, grid.Length);
+        chestAt = 0;
+        ResetZooLife();
         Seed();
         RefreshAll();
         Save();
@@ -311,8 +357,11 @@ public partial class MergeGame
         var g = new System.Text.StringBuilder(Cols * Rows);
         for (int r = 0; r < Rows; r++)
             for (int c = 0; c < Cols; c++)
-                g.Append(grid[c, r] != null ? (char)('0' + grid[c, r].level) : '0');
+                g.Append((char)('0' + CodeOf(grid[c, r])));
         PlayerPrefs.SetString("eg_grid", g.ToString());
+        PlayerPrefs.SetString("eg_ice", IceString());
+        SaveDailyLocal();
+        SaveZooLifeLocal();
         PlayerPrefs.SetInt("eg_energy", energy);
         PlayerPrefs.SetInt("eg_score", score);
         PlayerPrefs.SetInt("eg_gems", gems);

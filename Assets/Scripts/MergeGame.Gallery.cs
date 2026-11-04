@@ -243,8 +243,12 @@ public partial class MergeGame
         galModel.SetParent(galRoot, false);
 
         bool open = galIndex < zooCount;
+        int v = open ? zooVar[galIndex] : 0;
         galName.text = open ? Zoo[galIndex].name : "???";
-        galInfo.text = open ? "Открыт в твоём зоопарке" : "Ещё не открыт — вылупится из яйца уровня " + Zoo[galIndex].target;
+        galInfo.text = !open ? "Ещё не открыт — вылупится из яйца уровня " + Zoo[galIndex].target
+                     : v > 0 ? "Редкая окраска: " + VariantName[v].ToLower() + "!" : "Открыт в твоём зоопарке";
+        galInfo.color = v > 0 ? C(190, 130, 20) : Muted;
+        RefreshGalleryCare();
         galCount.text = (galIndex + 1) + " из " + Zoo.Length;
         galIdle = 0f;
     }
@@ -253,7 +257,7 @@ public partial class MergeGame
     {
         var root = new GameObject("Creature3D").transform;
         root.gameObject.layer = GalleryLayer;
-        Color body = open ? Zoo[idx].color : C(92, 78, 108);
+        Color body = !open ? C(92, 78, 108) : zooVar[idx] == 1 ? C(255, 205, 90) : zooVar[idx] == 2 ? C(96, 104, 170) : Zoo[idx].color;
         Color dark = open ? Color.Lerp(body, Ink, 0.25f) : C(74, 62, 88);
         Color light = open ? Color.Lerp(body, Color.white, 0.55f) : C(110, 96, 126);
         Color ink = open ? Ink : C(60, 50, 72);
@@ -380,7 +384,10 @@ public partial class MergeGame
 
         float time = Time.time;
         galModel.localRotation = Quaternion.Euler(galPitch, galYaw, 0f);
-        galModel.localPosition = new Vector3(0f, 0.05f * Mathf.Abs(Mathf.Sin(time * 2.2f)), 0f);   // подпрыгивает
+        // подпрыгивает; после «Покормить»/«Погладить» — радостно скачет
+        galHappy = Mathf.Max(0f, galHappy - dt);
+        float jump = galHappy > 0f ? 0.35f * Mathf.Abs(Mathf.Sin(galHappy * 7.8f)) : 0f;
+        galModel.localPosition = new Vector3(0f, 0.05f * Mathf.Abs(Mathf.Sin(time * 2.2f)) + jump, 0f);
         float squash = 1f + 0.025f * Mathf.Sin(time * 4.4f);
         galModel.localScale = new Vector3(1f / squash, squash, 1f / squash);
 

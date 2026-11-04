@@ -30,6 +30,7 @@ API (JSON):
                                  или сессия админки + заголовок X-CSRF. Параметры: versionCode, versionName, notes, force
   POST /api/shop/state          {"id","token"}                -> {"ok","mode","owned":[...],"items":[{"id","price"}]}
   POST /api/shop/buy            {"id","token","item"}         -> {"ok","granted","owned"}  (оплата монетами — списывает игра)
+  POST /api/album/claim         {"id","token","item","zoo"}   -> {"ok","owned"}  награда альбома (группа животных собрана)
   POST /api/grants/ack           {"id","token","ids":[...]}    -> {"ok"}   подарки администратора получены
   Ответ /api/status содержит "grants" — начисления/списания от администратора, ещё не полученные игрой.
   Заблокированный игрок получает 403 {"error":"banned","reason":...}.
@@ -102,6 +103,24 @@ SHOP_ITEMS = {
     "ui_berry":    ("Стиль «Ягодный»", "стиль", 2500),
     "fr_gold":     ("Рамка «Золотая»", "рамка", 1500),
     "fr_rainbow":  ("Рамка «Радужная»", "рамка", 4000),
+    # награды альбома (цена 0 — не продаются, выдаются за собранную группу животных)
+    "fr_magic":    ("Рамка «Волшебная»", "рамка", 0),
+    "fr_hearts":   ("Рамка «Сердечки»", "рамка", 0),
+    "fr_leaf":     ("Рамка «Листик»", "рамка", 0),
+    "bg_sea":      ("Фон «Морское дно»", "фон", 0),
+    "bg_sky":      ("Фон «Облака»", "фон", 0),
+    "ui_forest":   ("Стиль «Лесной»", "стиль", 0),
+    "ui_sunset":   ("Стиль «Закат»", "стиль", 0),
+}
+# группы альбома: награда -> номера животных (как Album в MergeGame.ZooLife.cs)
+ALBUM = {
+    "fr_magic": [0, 1, 7, 11],
+    "fr_hearts": [4, 6, 12, 25, 26, 27, 36],
+    "ui_forest": [3, 9, 15, 23, 24, 28, 37, 41],
+    "bg_sea": [2, 8, 18, 30, 31, 32],
+    "bg_sky": [5, 21, 35, 39, 40],
+    "fr_leaf": [13, 19, 20, 22],
+    "ui_sunset": [10, 14, 16, 17, 29, 33, 34, 38],
 }            # размер сохранения игры, байт
 PBKDF2_ROUNDS = 200_000
 DB_PATH = os.environ.get("HATCHMERGE_DB") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "hatchmerge.db")
@@ -691,6 +710,9 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/api/shop/state", "/api/shop/buy"):
             return self.shop_api(path.rsplit("/", 1)[1], body)
 
+        if path == "/api/album/claim":
+            return self.album_claim(body)
+
         if path in ("/api/friends/list", "/api/friends/add", "/api/friends/remove"):
             return self.friends_api(path.rsplit("/", 1)[1], body)
 
@@ -795,9 +817,9 @@ class Handler(BaseHTTPRequestHandler):
             has_account = _db.execute("SELECT 1 FROM accounts WHERE player_id=?", (pid,)).fetchone() is not None
             if action == "state":
                 return self.send_json(200, {"ok": True, "mode": "coins", "account": has_account, "owned": owned_items(pid),
-                                            "items": [{"id": k, "price": v[2]} for k, v in SHOP_ITEMS.items()]})
+                                            "items": [{"id": k, "price": v[2]} for k, v in SHOP_ITEMS.items() if v[2] > 0]})
             item = str(body.get("item", ""))
-            if item not in SHOP_ITEMS:
+            if item not in SHOP_ITEMS or SHOP_ITEMS[item][2] <= 0:      # награды альбома не продаются
                 return self.send_json(400, {"ok": False, "error": "bad_item"})
             if item in owned_items(pid):
                 return self.send_json(200, {"ok": True, "granted": True, "owned": owned_items(pid)})
@@ -808,6 +830,29 @@ class Handler(BaseHTTPRequestHandler):
             owned = owned_items(pid)
         print(f"{time.strftime('%H:%M:%S')}  покупка за монеты: {SHOP_ITEMS[item][0]} — ID {pid}")
         return self.send_json(200, {"ok": True, "granted": True, "owned": owned})
+
+    def album_claim(self, body):
+        item = str(body.get("item", ""))
+        with _db_lock:
+            row, err = self.auth_player(body)
+            if err:
+                return self.send_json(*err)
+            pid = row["id"]
+            if item not in ALBUM:
+                return self.send_json(400, {"ok": False, "error": "bad_item"})
+            # животные открываются по порядку: группа собрана, если открыто больше, чем самый большой номер в ней
+            zoo = max(row["zoo"], clamp_int(body.get("zoo"), 0, ZOO_MAX, 0))
+            if zoo <= max(ALBUM[item]):
+                return self.send_json(403, {"ok": False, "error": "not_complete"})
+            if item not in owned_items(pid):
+                _db.execute("INSERT INTO purchases (player_id, item, price, provider, created) VALUES (?,?,?,?,?)",
+                            (pid, item, 0, "album", time.time()))
+                if zoo > row["zoo"]:
+                    _db.execute("UPDATE players SET zoo=? WHERE id=?", (zoo, pid))
+                _db.commit()
+                print(f"{time.strftime('%H:%M:%S')}  награда альбома: {SHOP_ITEMS[item][0]} — ID {pid}")
+            owned = owned_items(pid)
+        return self.send_json(200, {"ok": True, "owned": owned})
 
     def friends_api(self, action, body):
         now = time.time()
@@ -1295,7 +1340,7 @@ document.getElementById('up').onsubmit = function (e) {{
                 f"<form method=post action='/admin/purchase/{x['id']}/revoke' style='display:inline'>"
                 f"<input type=hidden name=csrf value='{csrf}'><button class=small "
                 f"onclick=\"return confirm('Отозвать покупку?')\">Отозвать</button></form>")
-            src = {"coins": "за монеты", "test": "тест", "admin": "выдано админом"}.get(x["provider"], x["provider"])
+            src = {"coins": "за монеты", "test": "тест", "admin": "выдано админом", "album": "награда альбома"}.get(x["provider"], x["provider"])
             rows.append(f"<tr><td>{fmt_time(x['created'])}</td><td>{html.escape(title)}</td><td class=n>{x['price']} мон.</td>"
                         f"<td>{html.escape(src)}</td><td>{st}</td></tr>")
         table = (f"<div class=wrap2><table><tr><th>Когда</th><th>Предмет</th><th>Цена</th><th>Источник</th><th></th></tr>"
