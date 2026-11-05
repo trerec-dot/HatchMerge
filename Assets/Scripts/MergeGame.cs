@@ -132,12 +132,14 @@ public partial class MergeGame : MonoBehaviour
     {
         if (inst == null) return;
         inst.dayLast--; inst.spinDay = 0; inst.questDay = 0;
-        System.Array.Clear(inst.careAt, 0, inst.careAt.Length);
+        for (int i = 0; i < inst.careAt.Length; i++) inst.careAt[i] -= SadSeconds;     // прошли сутки — голодные грустят
         inst.EnsureQuests();
         inst.Save();
         inst.RefreshGiftDot();
         if (inst.tab == TabRewards) inst.RefreshRewards();
-        inst.Toast("Тест: наступил следующий день");
+        inst.RefreshZoo();
+        if (inst.tab == 1) inst.RefreshZooPanel();
+        inst.Toast("Тест: прошли сутки — подарки обновились, животные грустят");
     }
 #endif
 
@@ -456,6 +458,7 @@ public partial class MergeGame : MonoBehaviour
         int idx = zooCount;
         zooCount++;
         int variant = RollRareVariant(idx);       // иногда — редкая окраска
+        OnHatched(idx);                           // новорождённый сыт
         score += 50;
         gems += 2;
         FloatText("+50", pos + new Vector2(0, -60), 22, 160);

@@ -9,11 +9,11 @@ static class DebugMenu
     [MenuItem("Яйца-сюрпризы/Тест/Сундук готов к открытию")]
     static void ChestReady() => MergeGame.DebugChestReady();
 
-    [MenuItem("Яйца-сюрпризы/Тест/Следующий день (награды и кормление)")]
+    [MenuItem("Яйца-сюрпризы/Тест/Прошли сутки (награды, голодные животные)")]
     static void NextDay() => MergeGame.DebugNextDay();
 
     [MenuItem("Яйца-сюрпризы/Тест/Особые яйца и сундук на поле", true)]
     [MenuItem("Яйца-сюрпризы/Тест/Сундук готов к открытию", true)]
-    [MenuItem("Яйца-сюрпризы/Тест/Следующий день (награды и кормление)", true)]
+    [MenuItem("Яйца-сюрпризы/Тест/Прошли сутки (награды, голодные животные)", true)]
     static bool Playing() => EditorApplication.isPlaying;
 }

@@ -138,6 +138,8 @@ public partial class MergeGame
     RenderTexture galRt;
     Transform galRoot, galModel, galPedestal;
     readonly List<Transform> galEyes = new List<Transform>();
+    readonly List<Transform> galTears = new List<Transform>();
+    bool galSad;
     int galIndex;
     float galYaw = -25f, galIdle, galBlink = 2f, galPitch;
     bool galDragging;
@@ -239,6 +241,7 @@ public partial class MergeGame
         EnsureGalleryScene();
         if (galModel != null) Destroy(galModel.gameObject);
         galEyes.Clear();
+        galTears.Clear();
         galModel = BuildCreature3D(galIndex, galIndex < zooCount);
         galModel.SetParent(galRoot, false);
 
@@ -300,7 +303,20 @@ public partial class MergeGame
             galEyes.Add(eye);
             if (open) Blob(root, new Vector3(0.54f * s, -0.16f, -0.47f), new Vector3(0.25f, 0.14f, 0.08f), pink, 0);   // щёчка
         }
-        Blob(root, new Vector3(0, -0.06f, -0.69f), new Vector3(0.12f, 0.06f, 0.05f), ink, 0);              // улыбка
+        galSad = open && IsSad(idx);
+        if (!galSad)
+            Blob(root, new Vector3(0, -0.06f, -0.69f), new Vector3(0.12f, 0.06f, 0.05f), ink, 0);          // улыбка
+        else
+        {
+            // голодное животное грустит: брови домиком, рот уголками вниз, слёзы
+            Color tear = C(120, 195, 250);
+            for (int s = -1; s <= 1; s += 2)
+            {
+                Blob(root, new Vector3(0.3f * s, 0.31f, -0.6f), new Vector3(0.2f, 0.045f, 0.06f), ink, -18f * s);   // бровь
+                Blob(root, new Vector3(0.055f * s, -0.105f, -0.685f), new Vector3(0.085f, 0.04f, 0.05f), ink, -28f * s); // рот
+                galTears.Add(Blob(root, new Vector3(0.33f * s, -0.1f, -0.64f), new Vector3(0.07f, 0.11f, 0.06f), tear, 0).transform);
+            }
+        }
         return root;
     }
 
@@ -387,7 +403,20 @@ public partial class MergeGame
         // подпрыгивает; после «Покормить»/«Погладить» — радостно скачет
         galHappy = Mathf.Max(0f, galHappy - dt);
         float jump = galHappy > 0f ? 0.35f * Mathf.Abs(Mathf.Sin(galHappy * 7.8f)) : 0f;
-        galModel.localPosition = new Vector3(0f, 0.05f * Mathf.Abs(Mathf.Sin(time * 2.2f)) + jump, 0f);
+        float bob = galSad ? 0.012f * Mathf.Sin(time * 1.2f) : 0.05f * Mathf.Abs(Mathf.Sin(time * 2.2f));   // грустный почти не прыгает
+        galModel.localPosition = new Vector3(0f, bob + jump, 0f);
+
+        // слёзы стекают по щекам
+        for (int i = 0; i < galTears.Count; i++)
+        {
+            var tr = galTears[i];
+            if (tr == null) continue;
+            float u = Mathf.Repeat(time * 0.45f + i * 0.5f, 1f);
+            float y = Mathf.Lerp(-0.08f, -0.45f, u), x = tr.localPosition.x;
+            float k = 1f - (x / 0.8f) * (x / 0.8f) - ((y + 0.08f) / 0.78f) * ((y + 0.08f) / 0.78f);
+            tr.localPosition = new Vector3(x, y, -0.71f * Mathf.Sqrt(Mathf.Max(0.05f, k)) - 0.025f);
+            tr.localScale = new Vector3(0.07f, 0.11f, 0.06f) * (u < 0.85f ? 1f : (1f - u) / 0.15f);
+        }
         float squash = 1f + 0.025f * Mathf.Sin(time * 4.4f);
         galModel.localScale = new Vector3(1f / squash, squash, 1f / squash);
 

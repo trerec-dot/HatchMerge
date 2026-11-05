@@ -164,6 +164,7 @@ public partial class MergeGame
             if (s.care != null) for (int i = 0; i < careAt.Length && i < s.care.Length; i++) careAt[i] = s.care[i];
             Array.Clear(zooVar, 0, zooVar.Length);
             if (s.zvar != null) for (int i = 0; i < zooVar.Length && i < s.zvar.Length; i++) zooVar[i] = Mathf.Clamp(s.zvar[i], 0, 2);
+            NormalizeCare();
             RefreshGiftDot();
         }
 

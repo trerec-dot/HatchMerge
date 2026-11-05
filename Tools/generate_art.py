@@ -270,7 +270,7 @@ def draw_face_features(img, f, n, cx, cy, R, body):
             for dy in (-0.04, 0.07):
                 paint(img, line_mask(n, [(cx + s * 0.42 * R, cy + 0.14 * R + dy * R), (cx + s * 0.86 * R, cy + 0.08 * R + dy * 1.8 * R)], 0.025 * R), INK, 170)
 
-def creature(idx, N=256):
+def creature(idx, N=256, sad=False):
     kind, body = CREATURES[idx]
     n = N * S
     img = layer(n)
@@ -427,9 +427,21 @@ def creature(idx, N=256):
         paint(img, shape_mask(n, ell(ex, ey, 0.11 * R, 0.14 * R)), INK)
         paint(img, shape_mask(n, ell(ex - 0.035 * R, ey - 0.05 * R, 0.04 * R, 0.045 * R)), (255, 255, 255))
         paint(img, shape_mask(n, ell(ex + 0.04 * R, ey + 0.05 * R, 0.018 * R, 0.018 * R)), (255, 255, 255), 200)
-        paint(img, shape_mask(n, ell(cx + s * 0.58 * R, cy + 0.20 * R, 0.13 * R, 0.08 * R)), (245, 120, 150), 120)
+        if not sad:
+            paint(img, shape_mask(n, ell(cx + s * 0.58 * R, cy + 0.20 * R, 0.13 * R, 0.08 * R)), (245, 120, 150), 120)
     m = Image.new("L", (n, n), 0)
-    ImageDraw.Draw(m).arc([cx - 0.13 * R, cy + 0.02 * R, cx + 0.13 * R, cy + 0.26 * R], 20, 160, fill=255, width=int(0.045 * R))
+    if sad:
+        # грустная мордочка: брови домиком, рот дугой вниз, слёзы
+        for s in (-1, 1):
+            ex = cx + s * 0.34 * R
+            paint(img, line_mask(n, [(cx + s * 0.19 * R, ey - 0.27 * R), (cx + s * 0.47 * R, ey - 0.17 * R)], 0.045 * R), INK)
+            tear = (120, 195, 250)
+            paint(img, shape_mask(n, ell(ex + s * 0.05 * R, ey + 0.22 * R, 0.055 * R, 0.085 * R)), tear, 235)
+            paint(img, shape_mask(n, ell(ex + s * 0.07 * R, ey + 0.42 * R, 0.04 * R, 0.065 * R)), tear, 200)
+            paint(img, shape_mask(n, ell(ex + s * 0.035 * R, ey + 0.19 * R, 0.018 * R, 0.025 * R)), (255, 255, 255), 220)
+        ImageDraw.Draw(m).arc([cx - 0.12 * R, cy + 0.16 * R, cx + 0.12 * R, cy + 0.38 * R], 205, 335, fill=255, width=int(0.045 * R))
+    else:
+        ImageDraw.Draw(m).arc([cx - 0.13 * R, cy + 0.02 * R, cx + 0.13 * R, cy + 0.26 * R], 20, 160, fill=255, width=int(0.045 * R))
     if kind not in ("owl", "penguin", "phoenix") and not feats & {"snout", "trunk", "beak"}: paint(img, m, INK)
     if feats:
         draw_face_features(img, feats, n, cx, cy, R, body)
@@ -437,6 +449,7 @@ def creature(idx, N=256):
 
 for i in range(len(CREATURES)):
     creature(i).save(OUT + f"creature_{i}.png")
+    creature(i, sad=True).save(OUT + f"creature_sad_{i}.png")      # голодное животное грустит
 
 # ---------------------------------------------------------------- UI bits
 def coin(N=128):

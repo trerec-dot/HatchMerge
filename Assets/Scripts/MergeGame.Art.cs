@@ -11,6 +11,7 @@ public partial class MergeGame
     // ============================================================
     internal static readonly Sprite[] eggLvl = new Sprite[MaxLevel + 1];
     internal static readonly Sprite[] creatureSpr = new Sprite[42];   // = Zoo.Length
+    internal static readonly Sprite[] creatureSadSpr = new Sprite[42]; // грустные (голодные) мордочки
     internal static Sprite coinSpr, gemSpr, starSpr;
 
     static void LoadAssets()
@@ -33,6 +34,7 @@ public partial class MergeGame
         starSpr = LoadSprite("star", 64);
         for (int l = 1; l <= MaxLevel; l++) eggLvl[l] = LoadSprite("egg_" + l, 256);
         for (int i = 0; i < creatureSpr.Length; i++) creatureSpr[i] = LoadSprite("creature_" + i, 256);
+        for (int i = 0; i < creatureSadSpr.Length; i++) creatureSadSpr[i] = LoadSprite("creature_sad_" + i, 256);
     }
 
     static Sprite LoadSprite(string name, float ppu, float border = 0f)

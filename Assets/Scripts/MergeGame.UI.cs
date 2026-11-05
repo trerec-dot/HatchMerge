@@ -243,14 +243,16 @@ public partial class MergeGame
     void RefreshZoo()
     {
         foreach (Transform ch in zooIcons) Destroy(ch.gameObject);
-        zooTxt.text = zooCount + " / " + Zoo.Length;
+        int sadN = SadCount();
+        zooTxt.text = zooCount + " / " + Zoo.Length + (sadN > 0 ? " · грустят: " + sadN : "");
+        zooTxt.color = sadN > 0 ? C(60, 130, 210) : Muted;
         for (int s = 0; s < 3; s++)
         {
             int idx = zooCount - 3 + s;
             float cx = 170f + 48f * s;
             if (idx >= 0)
             {
-                var cr = MakeCreature(zooIcons, idx, 32f);
+                var cr = MakeCreature(zooIcons, idx, 32f, zooVar[idx], IsSad(idx));
                 cr.anchoredPosition = new Vector2(cx, -30f);
             }
             else AddImg(TL(zooIcons, cx - 16f, 14f, 32f, 32f, "Empty"), circleSpr, C(243, 234, 249));

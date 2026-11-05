@@ -201,10 +201,10 @@ public partial class MergeGame
             Round(card, Color.white, 20);
             if (i < zooCount)
             {
-                var cr = MakeCreature(card, i, 50f, zooVar[i]);
+                var cr = MakeCreature(card, i, 50f, zooVar[i], IsSad(i));
                 cr.anchoredPosition = new Vector2(55f, -40f);
                 WrapLabel(card, Zoo[i].name, 11, zooVar[i] > 0 ? C(190, 130, 20) : Ink, TextAnchor.UpperCenter, 4, 78, 102, 32);
-                if (CanFeed(i))            // голоден — монетка в углу
+                if (CanFeed(i))            // голоден — монетка в углу (грустит — ещё и слёзы на мордочке)
                 {
                     var hb = TL(card, 82, 6, 22, 22, "Hungry");
                     AddImg(hb, circleSpr, Color.white);

@@ -108,6 +108,7 @@ public partial class MergeGame
     void SetZooCount(int n)
     {
         zooCount = Mathf.Clamp(n, 0, Zoo.Length);
+        NormalizeCare();                             // выданные животные — сытые
         zooPage = -1;                                // зоопарк откроется на странице с последним животным
         RefreshAll();
         if (tab == 1) RefreshZooPanel();

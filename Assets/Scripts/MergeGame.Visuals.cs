@@ -32,7 +32,8 @@ public partial class MergeGame
 
     // ---------- Животное (рисуется кодом из кружков) ----------
     // variant: 0 обычная окраска, 1 золотая, 2 ночная (MergeGame.ZooLife.cs)
-    static RectTransform MakeCreature(Transform parent, int idx, float size, int variant = 0)
+    // sad: голодное животное грустит — брови домиком, слёзы (MergeGame.ZooLife.cs)
+    static RectTransform MakeCreature(Transform parent, int idx, float size, int variant = 0, bool sad = false)
     {
         var root = NewRt("Creature", parent);
         root.anchorMin = root.anchorMax = new Vector2(0, 1);
@@ -47,7 +48,8 @@ public partial class MergeGame
         {
             var pic = CC(root, 0, 0, size * 1.3f, size * 1.3f, "Picture");
             pic.anchoredPosition = new Vector2(0, size * 0.06f);
-            AddImg(pic, creatureSpr[idx], VariantTint[variant]).preserveAspect = true;
+            var spr = sad && creatureSadSpr[idx] != null ? creatureSadSpr[idx] : creatureSpr[idx];
+            AddImg(pic, spr, VariantTint[variant]).preserveAspect = true;
             if (variant > 0) AddVariantStar(root, size, variant);
             return root;
         }
@@ -86,6 +88,7 @@ public partial class MergeGame
         Blob(0.15f, 0.04f, 0.09f, 0.11f, Ink);
         Blob(-0.27f, -0.09f, 0.12f, 0.08f, C(245, 143, 168, 0.6f)); // щёчки
         Blob(0.27f, -0.09f, 0.12f, 0.08f, C(245, 143, 168, 0.6f));
+        if (sad) { Blob(-0.17f, -0.12f, 0.06f, 0.1f, C(120, 195, 250)); Blob(0.17f, -0.12f, 0.06f, 0.1f, C(120, 195, 250)); }
         if (variant > 0) AddVariantStar(root, size, variant);
         return root;
     }

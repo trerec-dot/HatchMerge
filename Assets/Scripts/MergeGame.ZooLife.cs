@@ -1,8 +1,10 @@
 // Жизнь зоопарка: уход за животными, альбом с наградами и редкие окраски.
 //
-// • Уход: в 3D-просмотре животного — «Покормить» (раз в 4 часа, приносит монеты) и «Погладить»
-//   (просто радуется). В «Зоопарке» монетка на карточке — животное можно покормить;
-//   кнопка «Покормить всех» кормит всех голодных сразу.
+// • Уход: животных кормят за монеты — чем выше уровень яйца, из которого животное вылупляется,
+//   тем дороже еда (уровень × 10 монет). Через 6 часов после еды животное проголодается
+//   (монетка на карточке), а если не кормить сутки — загрустит: на мордочке брови домиком и слёзы.
+//   В 3D-просмотре — «Покормить» и «Погладить»; в «Зоопарке» — «Покормить всех» (сколько хватит монет).
+//   Только что вылупившееся животное сыто.
 // • Альбом: животные разбиты на группы («Лесные», «Морские»…). Собрали группу — забирайте награду:
 //   рамку, фон или стиль интерфейса. Награды записываются на сервер (как покупки), поэтому
 //   с аккаунтом они есть на всех устройствах. Надеть/снять — там же, в альбоме.
@@ -20,7 +22,8 @@ using UnityEngine.UI;
 public partial class MergeGame
 {
     const int TabAlbum = 11;
-    const int CareSeconds = 4 * 3600;
+    const int HungrySeconds = 6 * 3600;     // через сколько после еды животное проголодается
+    const int SadSeconds = 24 * 3600;       // через сколько без еды загрустит
 
     // ---------- редкие окраски ----------
     static readonly string[] VariantName = { "", "Золотая", "Ночная" };
@@ -47,7 +50,8 @@ public partial class MergeGame
     readonly Text[] albProg = new Text[7], albBtnTxt = new Text[7];
     readonly Image[] albBtnImg = new Image[7];
     readonly RectTransform[] albIcons = new RectTransform[7];
-    Text feedAllTxt, galCareInfo;
+    Text feedAllTxt, galCareInfo, galFeedTxt;
+    RectTransform galFeedCoin;
     Image feedAllImg, galFeedImg;
     float galHappy;
     bool albumBusy;
@@ -61,7 +65,18 @@ public partial class MergeGame
         for (int i = 0; i < zooVar.Length; i++) zooVar[i] = i < v.Length ? Mathf.Clamp(v[i] - '0', 0, 2) : 0;
         var c = PlayerPrefs.GetString("zoo_care", "").Split(',');
         for (int i = 0; i < careAt.Length; i++) careAt[i] = i < c.Length && long.TryParse(c[i], out long t) ? t : 0;
+        NormalizeCare();
     }
+
+    // животные, которых ещё ни разу не кормили (после обновления игры), считаются сытыми с этого момента
+    void NormalizeCare()
+    {
+        long now = NowUnix();
+        for (int i = 0; i < careAt.Length; i++)
+            if (i < zooCount && careAt[i] <= 0) careAt[i] = now;
+    }
+
+    void OnHatched(int idx) { if (idx >= 0 && idx < careAt.Length) careAt[idx] = NowUnix(); }
 
     void SaveZooLifeLocal()
     {
@@ -91,24 +106,32 @@ public partial class MergeGame
     // ============================================================
     //  Уход
     // ============================================================
-    bool CanFeed(int idx) => idx < zooCount && NowUnix() - careAt[idx] >= CareSeconds;
+    bool CanFeed(int idx) => idx < zooCount && NowUnix() - careAt[idx] >= HungrySeconds;
+    bool IsSad(int idx) => idx >= 0 && idx < zooCount && NowUnix() - careAt[idx] >= SadSeconds;
 
-    int FeedReward(int idx) => 15 + Zoo[idx].target * 5;
+    static int FeedPrice(int idx) => Zoo[idx].target * 10;
+
+    int SadCount()
+    {
+        int n = 0;
+        for (int i = 0; i < zooCount; i++) if (IsSad(i)) n++;
+        return n;
+    }
 
     string FeedWait(int idx)
     {
-        long left = CareSeconds - (NowUnix() - careAt[idx]);
+        long left = HungrySeconds - (NowUnix() - careAt[idx]);
         if (left <= 0) return "";
         long h = left / 3600, m = (left % 3600) / 60;
         return h > 0 ? h + " ч " + m + " мин" : Math.Max(1, m) + " мин";
     }
 
-    // покормить одно животное; true — покормили
+    // покормить одно животное за монеты; true — покормили
     bool FeedOne(int idx, bool quiet)
     {
-        if (!CanFeed(idx)) return false;
+        if (!CanFeed(idx) || score < FeedPrice(idx)) return false;
         careAt[idx] = NowUnix();
-        score += FeedReward(idx);
+        score -= FeedPrice(idx);
         if (zooVar[idx] == 0 && UnityEngine.Random.value < 0.02f)
         {
             zooVar[idx] = UnityEngine.Random.Range(1, 3);
@@ -120,13 +143,15 @@ public partial class MergeGame
     void FeedFromGallery()
     {
         if (galIndex >= zooCount) { GameAudio.Deny(); Toast("Это животное ещё не вылупилось"); return; }
-        if (!CanFeed(galIndex)) { GameAudio.Deny(); Toast("Ещё сыт. Покормить можно через " + FeedWait(galIndex)); return; }
-        int v0 = zooVar[galIndex];
+        if (!CanFeed(galIndex)) { GameAudio.Deny(); Toast("Ещё сыт. Проголодается через " + FeedWait(galIndex)); return; }
+        int price = FeedPrice(galIndex);
+        if (score < price) { GameAudio.Deny(); Toast("Не хватает монет: еда стоит " + price); return; }
+        bool wasSad = IsSad(galIndex);
         FeedOne(galIndex, false);
         galHappy = 1.2f;
         GameAudio.Buy();
-        if (zooVar[galIndex] == v0) Toast("Ням! +" + FeedReward(galIndex) + " монет");
-        else ShowGalleryCreature();              // окраска поменялась — перестроить модель
+        ShowGalleryCreature();                   // мордочка снова весёлая (и окраска могла поменяться)
+        Toast(wasSad ? "Ням! Больше не грустит" : "Ням-ням! Спасибо!");
         Burst(new Vector2(195, 300), C(255, 205, 90), 14, menuFx);
         QuestAdd(QuestKind.Feed);
         AfterCare();
@@ -135,6 +160,12 @@ public partial class MergeGame
     void PetFromGallery()
     {
         if (galIndex >= zooCount) { GameAudio.Deny(); Toast("Это животное ещё не вылупилось"); return; }
+        if (IsSad(galIndex))
+        {
+            GameAudio.Click();
+            Toast(Zoo[galIndex].name + ": мне грустно… я хочу кушать");
+            return;
+        }
         galHappy = 1.2f;
         GameAudio.Hatch();
         Burst(new Vector2(195, 290), C(245, 143, 168), 12, menuFx);
@@ -144,15 +175,21 @@ public partial class MergeGame
 
     void FeedAll()
     {
-        int n = 0, coins = 0;
-        for (int i = 0; i < zooCount; i++)
+        int hungry = HungryCount();
+        if (hungry == 0) { GameAudio.Deny(); Toast(zooCount == 0 ? "В зоопарке пока никого нет" : "Все сыты — загляните попозже"); return; }
+        // сначала самые грустные (дольше всех без еды)
+        var order = new System.Collections.Generic.List<int>();
+        for (int i = 0; i < zooCount; i++) if (CanFeed(i)) order.Add(i);
+        order.Sort((a, b) => careAt[a].CompareTo(careAt[b]));
+        int n = 0, spent = 0;
+        foreach (var i in order)
         {
-            int r = FeedReward(i);
-            if (FeedOne(i, true)) { n++; coins += r; }
+            int price = FeedPrice(i);
+            if (FeedOne(i, true)) { n++; spent += price; }
         }
-        if (n == 0) { GameAudio.Deny(); Toast(zooCount == 0 ? "В зоопарке пока никого нет" : "Все сыты — загляните попозже"); return; }
+        if (n == 0) { GameAudio.Deny(); Toast("Не хватает монет на еду"); return; }
         GameAudio.Buy();
-        Toast("Покормили: " + n + " · +" + coins + " монет");
+        Toast("Покормили: " + n + " · −" + spent + " монет" + (n < hungry ? " · на остальных не хватило" : ""));
         Burst(new Vector2(280, 640), C(255, 205, 90), 16, menuFx);
         QuestAdd(QuestKind.Feed, n);
         AfterCare();
@@ -169,6 +206,7 @@ public partial class MergeGame
     {
         Save();
         RefreshTop();
+        RefreshZoo();                            // «грустят: N» на главном экране
         if (tab == 1) RefreshZooPanel();
         RefreshGalleryCare();
     }
@@ -179,7 +217,9 @@ public partial class MergeGame
         galCareInfo = Label(galleryPanel, "", 12, Muted, TextAnchor.MiddleCenter, 20, 596, 350, 18);
         var feed = TL(galleryPanel, 20, 618, 170, 44, "Feed");
         galFeedImg = Round(feed, Red, 22);
-        Label(feed, "Покормить", 16, Color.white, TextAnchor.MiddleCenter, 0, 0, 170, 44);
+        galFeedTxt = Label(feed, "Покормить", 15, Color.white, TextAnchor.MiddleCenter, 22, 0, 148, 44);
+        galFeedCoin = TL(feed, 0, 0, 44, 44, "Coin");
+        CoinIcon(galFeedCoin, 0, 0, 20);
         AddBtn(feed, FeedFromGallery, TabGallery);
         var pet = TL(galleryPanel, 200, 618, 170, 44, "Pet");
         Round(pet, C(255, 225, 235), 22);
@@ -192,9 +232,14 @@ public partial class MergeGame
         if (galCareInfo == null) return;
         bool open = galIndex < zooCount;
         bool can = open && CanFeed(galIndex);
-        galFeedImg.color = can ? Red : C(216, 201, 190);
-        galCareInfo.text = !open ? "" : can ? "Голоден! Покормите — получите " + FeedReward(galIndex) + " монет"
-                                             : "Сыт. Покормить можно через " + FeedWait(galIndex);
+        int price = FeedPrice(galIndex);
+        galFeedImg.color = can && score >= price ? Red : C(216, 201, 190);
+        galFeedTxt.text = can ? "Покормить · " + price : "Сыт";
+        galFeedCoin.gameObject.SetActive(can);
+        galCareInfo.color = open && IsSad(galIndex) ? C(60, 130, 210) : Muted;
+        galCareInfo.text = !open ? "" : IsSad(galIndex) ? "Грустит и плачет — давно не ел!"
+                         : can ? "Проголодался. Еда стоит " + price + " монет"
+                         : "Сыт. Проголодается через " + FeedWait(galIndex);
     }
 
     // ============================================================
@@ -279,7 +324,7 @@ public partial class MergeGame
                 float x = 12 + j * 24;
                 if (a < zooCount)
                 {
-                    var cr = MakeCreature(albIcons[i], a, 20f, MyVariant(a));
+                    var cr = MakeCreature(albIcons[i], a, 20f, MyVariant(a), IsSad(a));
                     cr.anchoredPosition = new Vector2(x, -13);
                 }
                 else

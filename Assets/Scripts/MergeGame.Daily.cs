@@ -224,6 +224,7 @@ public partial class MergeGame
         EnsureQuests();
         RefreshGiftDot();
         if (tab == TabRewards && !spinning) RefreshRewards();
+        if (tab == 0) RefreshZoo();          // животные могли проголодаться и загрустить
     }
 
     // ============================================================
