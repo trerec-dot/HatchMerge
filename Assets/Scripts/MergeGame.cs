@@ -318,7 +318,7 @@ public partial class MergeGame : MonoBehaviour
         }
 
         if (BackPressed() && tab != TabStart)
-            SetTab(tab == TabProfile ? TabPlayers : tab == TabAvatar ? avatarReturnTab : tab == TabGallery || tab == TabAlbum ? 1 : TabStart);
+            SetTab(tab == TabProfile ? TabPlayers : tab == TabAvatar ? avatarReturnTab : tab == TabGallery || tab == TabAlbum ? 1 : tab == TabPet ? TabGallery : TabStart);
         UpdatePlayers(dt);
         UpdateAccount(dt);
         UpdateFriends(dt);

@@ -31,6 +31,10 @@ API (JSON):
   POST /api/shop/state          {"id","token"}                -> {"ok","mode","owned":[...],"items":[{"id","price"}]}
   POST /api/shop/buy            {"id","token","item"}         -> {"ok","granted","owned"}  (оплата монетами — списывает игра)
   POST /api/album/claim         {"id","token","item","zoo"}   -> {"ok","owned"}  награда альбома (группа животных собрана)
+  POST /api/pets/state          {"id","token"}   -> {"ok","pets","links","candidates"}   питомцы с именами и их друзья
+  POST /api/pets/name           {"id","token","animal","name"}  -> {"ok"} / 400 bad_name   имя питомцу ("" — убрать)
+  POST /api/pets/link           {"id","token","animal","friend","friendAnimal"}  подружить питомцев (только взаимные друзья)
+  POST /api/pets/unlink         {"id","token","animal","friend","friendAnimal"}  поссорить :)
   POST /api/grants/ack           {"id","token","ids":[...]}    -> {"ok"}   подарки администратора получены
   Ответ /api/status содержит "grants" — начисления/списания от администратора, ещё не полученные игрой.
   Заблокированный игрок получает 403 {"error":"banned","reason":...}.
@@ -208,6 +212,24 @@ _db.execute("""
         PRIMARY KEY (player_id, friend_id)
     )""")
 _db.execute("CREATE INDEX IF NOT EXISTS friends_back ON friends(friend_id)")
+# питомцы: животные, которым игрок дал имя
+_db.execute("""
+    CREATE TABLE IF NOT EXISTS pets (
+        player_id TEXT NOT NULL,
+        animal    INTEGER NOT NULL,
+        name      TEXT NOT NULL,
+        updated   REAL NOT NULL,
+        PRIMARY KEY (player_id, animal)
+    )""")
+# дружба питомцев разных игроков; пара хранится один раз: (p1, a1) < (p2, a2)
+_db.execute("""
+    CREATE TABLE IF NOT EXISTS pet_links (
+        p1 TEXT NOT NULL, a1 INTEGER NOT NULL,
+        p2 TEXT NOT NULL, a2 INTEGER NOT NULL,
+        created REAL NOT NULL,
+        PRIMARY KEY (p1, a1, p2, a2)
+    )""")
+_db.execute("CREATE INDEX IF NOT EXISTS pet_links_back ON pet_links(p2, a2)")
 _db.execute("""
     CREATE TABLE IF NOT EXISTS reset_codes (
         email     TEXT PRIMARY KEY,
@@ -253,6 +275,61 @@ def player_json(row, now):
         "sinceDays": int(max(0, now - row["created"]) // 86400),
         "frame": row["frame"] if "frame" in row.keys() else "",
     }
+
+
+# ---------------------------------------------------------------- имена питомцев
+PET_NAME_MAX = 14
+MAX_PET_LINKS = 8          # сколько друзей может быть у одного питомца
+# корни грубых и взрослых слов — такие имена не принимаются (игру видят дети)
+BAD_ROOTS = [
+    "хуй", "хуе", "хуё", "хуя", "хую", "хер", "пизд", "ебат", "ебан", "ебал", "ебуч", "еблан", "ебло", "выеб", "заеб",
+    "уеб", "долбоеб", "бля", "сука", "суки", "сучк", "мудак", "мудил", "пидор", "пидар", "педик", "залуп", "гандон",
+    "шлюх", "дерьм", "говн", "жоп", "срат", "ссат", "дебил", "идиот", "урод", "секс", "порн", "нацис", "гитлер",
+    "fuck", "shit", "bitch", "cunt", "dick", "porn", "sex", "nazi", "hitler", "nigg",
+]
+_LOOKALIKE = str.maketrans({"a": "а", "e": "е", "o": "о", "p": "р", "c": "с", "x": "х", "y": "у", "k": "к",
+                            "m": "м", "t": "т", "b": "в", "h": "н", "u": "и", "0": "о", "3": "з", "4": "ч",
+                            "6": "б", "@": "а", "ё": "е"})
+
+
+def clean_pet_name(raw):
+    """Имя питомца: (имя, None) или (None, причина)."""
+    name = re.sub(r"\s+", " ", str(raw or "")).strip()
+    if not name:
+        return "", None
+    if len(name) > PET_NAME_MAX:
+        return None, "too_long"
+    if not re.fullmatch(r"[A-Za-zА-Яа-яЁё0-9 \-]+", name) or not re.search(r"[A-Za-zА-Яа-яЁё]", name):
+        return None, "bad_chars"
+    flat = re.sub(r"[\s\-]", "", name.lower())
+    variants = {flat, flat.replace("ё", "е"), flat.translate(_LOOKALIKE)}
+    for v in variants:
+        for root in BAD_ROOTS:
+            if root in v or root.translate(_LOOKALIKE) in v:
+                return None, "bad_word"
+    return name, None
+
+
+def mutual_friends(pid):
+    """ID взаимных друзей (добавили друг друга)."""
+    return [r[0] for r in _db.execute("""SELECT f.friend_id FROM friends f
+                                         JOIN friends b ON b.player_id = f.friend_id AND b.friend_id = f.player_id
+                                         JOIN players p ON p.id = f.friend_id
+                                         WHERE f.player_id = ? AND p.banned = 0""", (pid,))]
+
+
+def pet_key(pa, aa, pb, ab):
+    return (pa, aa, pb, ab) if (pa, aa) < (pb, ab) else (pb, ab, pa, aa)
+
+
+def drop_pet_links(pid, animal=None, other=None):
+    """Убрать дружбу питомцев: все у питомца / все у игрока / все между двумя игроками."""
+    if other is not None:
+        _db.execute("DELETE FROM pet_links WHERE (p1=? AND p2=?) OR (p1=? AND p2=?)", (pid, other, other, pid))
+    elif animal is None:
+        _db.execute("DELETE FROM pet_links WHERE p1=? OR p2=?", (pid, pid))
+    else:
+        _db.execute("DELETE FROM pet_links WHERE (p1=? AND a1=?) OR (p2=? AND a2=?)", (pid, animal, pid, animal))
 
 
 def owned_items(pid):
@@ -713,6 +790,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/album/claim":
             return self.album_claim(body)
 
+        if path in ("/api/pets/state", "/api/pets/name", "/api/pets/link", "/api/pets/unlink"):
+            return self.pets_api(path.rsplit("/", 1)[1], body)
+
         if path in ("/api/friends/list", "/api/friends/add", "/api/friends/remove"):
             return self.friends_api(path.rsplit("/", 1)[1], body)
 
@@ -854,6 +934,78 @@ class Handler(BaseHTTPRequestHandler):
             owned = owned_items(pid)
         return self.send_json(200, {"ok": True, "owned": owned})
 
+    def pets_api(self, action, body):
+        now = time.time()
+        with _db_lock:
+            row, err = self.auth_player(body)
+            if err:
+                return self.send_json(*err)
+            pid = row["id"]
+            animal = clamp_int(body.get("animal"), 0, ZOO_MAX - 1, -1)
+
+            if action == "name":
+                if animal < 0:
+                    return self.send_json(400, {"ok": False, "error": "bad_animal"})
+                name, why = clean_pet_name(body.get("name"))
+                if name is None:
+                    return self.send_json(400, {"ok": False, "error": why})
+                if name == "":
+                    _db.execute("DELETE FROM pets WHERE player_id=? AND animal=?", (pid, animal))
+                    drop_pet_links(pid, animal)          # без имени питомец не дружит
+                else:
+                    _db.execute("INSERT INTO pets (player_id, animal, name, updated) VALUES (?,?,?,?) "
+                                "ON CONFLICT(player_id, animal) DO UPDATE SET name=excluded.name, updated=excluded.updated",
+                                (pid, animal, name, now))
+                _db.commit()
+                return self.send_json(200, {"ok": True, "name": name})
+
+            if action in ("link", "unlink"):
+                fid = str(body.get("friend", ""))
+                fa = clamp_int(body.get("friendAnimal"), 0, ZOO_MAX - 1, -1)
+                if animal < 0 or fa < 0 or not re.fullmatch(r"\d{6}", fid) or fid == pid:
+                    return self.send_json(400, {"ok": False, "error": "bad_pet"})
+                key = pet_key(pid, animal, fid, fa)
+                if action == "unlink":
+                    _db.execute("DELETE FROM pet_links WHERE p1=? AND a1=? AND p2=? AND a2=?", key)
+                    _db.commit()
+                    return self.send_json(200, {"ok": True})
+                if fid not in mutual_friends(pid):
+                    return self.send_json(403, {"ok": False, "error": "not_friends"})
+                mine = _db.execute("SELECT 1 FROM pets WHERE player_id=? AND animal=?", (pid, animal)).fetchone()
+                theirs = _db.execute("SELECT 1 FROM pets WHERE player_id=? AND animal=?", (fid, fa)).fetchone()
+                if not mine or not theirs:
+                    return self.send_json(409, {"ok": False, "error": "no_name"})
+                for p_, a_ in ((pid, animal), (fid, fa)):
+                    n = _db.execute("SELECT COUNT(*) FROM pet_links WHERE (p1=? AND a1=?) OR (p2=? AND a2=?)",
+                                    (p_, a_, p_, a_)).fetchone()[0]
+                    if n >= MAX_PET_LINKS:
+                        return self.send_json(409, {"ok": False, "error": "too_many"})
+                _db.execute("INSERT OR IGNORE INTO pet_links (p1, a1, p2, a2, created) VALUES (?,?,?,?,?)", key + (now,))
+                _db.commit()
+                print(f"{time.strftime('%H:%M:%S')}  питомцы подружились: {pid}/{animal} и {fid}/{fa}")
+                return self.send_json(200, {"ok": True})
+
+            # state: мои питомцы, их друзья и питомцы взаимных друзей, с которыми можно подружиться
+            pets = [{"animal": r["animal"], "name": r["name"]} for r in
+                    _db.execute("SELECT animal, name FROM pets WHERE player_id=? ORDER BY animal", (pid,))]
+            links = []
+            for r in _db.execute("SELECT * FROM pet_links WHERE p1=? OR p2=?", (pid, pid)):
+                mine_a, other, other_a = (r["a1"], r["p2"], r["a2"]) if r["p1"] == pid else (r["a2"], r["p1"], r["a1"])
+                o = _db.execute("""SELECT p.nick_a, p.nick_b, p.banned, t.name FROM players p
+                                   JOIN pets t ON t.player_id = p.id AND t.animal = ? WHERE p.id = ?""",
+                                (other_a, other)).fetchone()
+                if o is None or o["banned"]:
+                    continue
+                links.append({"mine": mine_a, "player": other, "nick": nick(o), "animal": other_a, "name": o["name"]})
+            cands = []
+            for fid in mutual_friends(pid):
+                o = _db.execute("SELECT nick_a, nick_b FROM players WHERE id=?", (fid,)).fetchone()
+                for t in _db.execute("SELECT animal, name FROM pets WHERE player_id=? ORDER BY updated DESC", (fid,)):
+                    cands.append({"player": fid, "nick": nick(o), "animal": t["animal"], "name": t["name"]})
+                    if len(cands) >= 80:
+                        break
+        return self.send_json(200, {"ok": True, "pets": pets, "links": links, "candidates": cands})
+
     def friends_api(self, action, body):
         now = time.time()
         with _db_lock:
@@ -867,6 +1019,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(400, {"ok": False, "error": "bad_friend"})
                 if action == "remove":
                     _db.execute("DELETE FROM friends WHERE player_id=? AND friend_id=?", (pid, fid))
+                    drop_pet_links(pid, other=fid)          # больше не друзья — и питомцы не дружат
                     _db.commit()
                     return self.send_json(200, {"ok": True})
                 other = _db.execute("SELECT banned FROM players WHERE id=?", (fid,)).fetchone()
@@ -1154,9 +1307,33 @@ table{{border-collapse:collapse;background:#fff}}td,th{{padding:6px 12px;border-
 <div class=card><h3>Сохранение на сервере</h3><table class=kv>{save_html}</table>
 <h3>Зоопарк</h3><ul class=zoo>{zoo}</ul></div></div>
 {self.admin_friends(r['id'], now)}
+{self.admin_pets(r['id'])}
 {self.admin_purchases(r)}
 {self.admin_manage(r)}"""
         return self.send_html(200, admin_shell(f"Игрок {r['id']}", body))
+
+    def admin_pets(self, pid):
+        hidden = f"<input type=hidden name=csrf value='{html.escape(self.admin_csrf())}'>"
+        with _db_lock:
+            pets = _db.execute("SELECT * FROM pets WHERE player_id=? ORDER BY animal", (pid,)).fetchall()
+            out = []
+            for t in pets:
+                links = _db.execute("""SELECT * FROM pet_links WHERE (p1=? AND a1=?) OR (p2=? AND a2=?)""",
+                                    (pid, t["animal"], pid, t["animal"])).fetchall()
+                fr = []
+                for l in links:
+                    other, oa = (l["p2"], l["a2"]) if l["p1"] == pid else (l["p1"], l["a1"])
+                    on = _db.execute("SELECT name FROM pets WHERE player_id=? AND animal=?", (other, oa)).fetchone()
+                    fr.append(f"<a href='/admin/player/{other}'>{html.escape(on['name'] if on else '?')} ({other})</a>")
+                species = ZOO_NAMES[t["animal"]] if t["animal"] < len(ZOO_NAMES) else str(t["animal"])
+                out.append(f"<tr><td><b>{html.escape(t['name'])}</b></td><td>{html.escape(species)}</td>"
+                           f"<td>{', '.join(fr) or '<span class=muted>нет</span>'}</td><td>{fmt_time(t['updated'])}</td>"
+                           f"<td><form method=post action='/admin/player/{pid}/petname' style='margin:0'>{hidden}"
+                           f"<input type=hidden name=animal value={t['animal']}><button class=danger>Сбросить имя</button></form></td></tr>")
+        table = ("<div class='wrap2 rows'><table><tr><th>Имя</th><th>Животное</th><th>Дружит с</th><th>Изменено</th><th></th></tr>"
+                 f"{''.join(out)}</table></div>") if out else "<p class=muted>Игрок пока не давал имён животным.</p>"
+        return f"""<div class=card style="margin-top:16px"><h3>Питомцы с именами ({len(pets)})</h3>
+<p class=muted>Имена видят взаимные друзья игрока. Неприличное имя можно сбросить — дружба этого питомца тоже пропадёт.</p>{table}</div>"""
 
     def admin_friends(self, pid, now):
         with _db_lock:
@@ -1465,6 +1642,19 @@ document.getElementById('up').onsubmit = function (e) {{
                 admin_log(ip, x["player_id"], "Покупка отозвана", SHOP_ITEMS.get(x["item"], (x["item"],))[0])
                 _db.commit()
             return self.redirect(f"/admin/player/{x['player_id']}?msg={quote('Покупка отозвана')}")
+
+        m = re.fullmatch(r"/admin/player/(\d{6})/petname", path)
+        if m:
+            pid = m.group(1)
+            animal = clamp_int(form.get("animal"), 0, ZOO_MAX - 1, -1)
+            with _db_lock:
+                t = _db.execute("SELECT name FROM pets WHERE player_id=? AND animal=?", (pid, animal)).fetchone()
+                if t is not None:
+                    _db.execute("DELETE FROM pets WHERE player_id=? AND animal=?", (pid, animal))
+                    drop_pet_links(pid, animal)
+                    admin_log(ip, pid, "Сброшено имя питомца", t["name"])
+                    _db.commit()
+            return self.redirect(f"/admin/player/{pid}?msg={quote('Имя питомца сброшено')}")
 
         m = re.fullmatch(r"/admin/player/(\d{6})/(grant|ban|unban|resetpw|giveitem)", path)
         if not m:

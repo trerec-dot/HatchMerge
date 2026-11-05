@@ -77,6 +77,8 @@ public partial class MergeGame
         public TouchScreenKeyboardType kb;
         public Text showTxt;          // «Показать/Скрыть» у полей пароля
         public Action submit;         // что делать по Enter / «Готово» в последнем поле формы
+        public int tab = TabAccount;  // на каком экране поле
+        public bool petName;          // имя питомца: только буквы, цифры, пробел и дефис
     }
 
     readonly System.Collections.Generic.List<TextField> fields = new System.Collections.Generic.List<TextField>();
@@ -592,9 +594,10 @@ public partial class MergeGame
         accUserMsg = WrapLabel(accUser, "", 14, Muted, TextAnchor.UpperCenter, 20, 460, 350, 40);
     }
 
-    TextField MakeField(RectTransform parent, float y, string placeholder, bool secret, TouchScreenKeyboardType kb, int max)
+    TextField MakeField(RectTransform parent, float y, string placeholder, bool secret, TouchScreenKeyboardType kb, int max,
+                        int onTab = TabAccount)
     {
-        var f = new TextField { placeholder = placeholder, secret = secret, kb = kb, max = max };
+        var f = new TextField { placeholder = placeholder, secret = secret, kb = kb, max = max, tab = onTab };
         f.rt = TL(parent, 20, y, 350, 52, "Field");
         f.bg = Round(f.rt, Color.white, 20);
         f.txt = Label(f.rt, "", 17, Ink, TextAnchor.MiddleLeft, 18, 0, secret ? 236 : 314, 52);
@@ -606,9 +609,9 @@ public partial class MergeGame
             var show = TL(f.rt, 262, 8, 80, 36, "Show");
             Round(show, C(238, 227, 247), 18);
             f.showTxt = Label(show, "Показать", 12, Ink, TextAnchor.MiddleCenter, 0, 0, 80, 36);
-            AddBtn(show, () => { f.reveal = !f.reveal; GameAudio.Click(); RefreshFields(); }, TabAccount);
+            AddBtn(show, () => { f.reveal = !f.reveal; GameAudio.Click(); RefreshFields(); }, onTab);
         }
-        AddBtn(f.rt, () => FocusField(f), TabAccount);
+        AddBtn(f.rt, () => FocusField(f), onTab);
         fields.Add(f);
         return f;
     }
@@ -712,6 +715,7 @@ public partial class MergeGame
         if (focused == null || char.IsControl(c) || focused.value.Length >= focused.max) return;
         if (focused.kb == TouchScreenKeyboardType.EmailAddress && char.IsWhiteSpace(c)) return;
         if (focused.kb == TouchScreenKeyboardType.NumberPad && (c < '0' || c > '9')) return;
+        if (focused.petName && !(char.IsLetterOrDigit(c) || c == ' ' || c == '-')) return;
         focused.value += c;
     }
 
@@ -753,7 +757,7 @@ public partial class MergeGame
             if (logoutArm <= 0f && accLogoutTxt != null) accLogoutTxt.text = "Выйти из аккаунта";
         }
 
-        if (tab != TabAccount || focused == null)
+        if (focused == null || tab != focused.tab)
         {
             if (focused != null) Blur();
             return;
@@ -766,6 +770,7 @@ public partial class MergeGame
             if (t.Length > focused.max) t = t.Substring(0, focused.max);
             if (focused.kb == TouchScreenKeyboardType.EmailAddress) t = t.Trim();
             if (focused.kb == TouchScreenKeyboardType.NumberPad) t = System.Text.RegularExpressions.Regex.Replace(t, "[^0-9]", "");
+            if (focused.petName) t = System.Text.RegularExpressions.Regex.Replace(t, @"[^\p{L}\p{Nd} \-]", "");
             focused.value = t;
             if (tsk.status == TouchScreenKeyboard.Status.Done)
             {
@@ -786,7 +791,7 @@ public partial class MergeGame
         var e = Event.current;
         if (e.type != EventType.KeyDown) return;
         if (tab == TabPlayers) { if (!friendsMode && PlayersKey(e)) e.Use(); return; }
-        if (focused == null || tsk != null || tab != TabAccount) return;
+        if (focused == null || tsk != null || tab != focused.tab) return;
 
         if ((e.control || e.command) && e.keyCode == KeyCode.V) FieldPaste();
         else if (e.keyCode == KeyCode.Backspace) FieldBackspace();

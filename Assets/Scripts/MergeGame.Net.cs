@@ -102,6 +102,9 @@ public partial class MergeGame
             // купленное оформление — один раз за запуск (и после входа в аккаунт)
             if (netState == NetState.Online && !shopLoaded) yield return LoadShopState();
 
+            // имена питомцев и их друзья — один раз для этого ID (после входа в аккаунт — заново)
+            if (netState == NetState.Online && petsFor != netId) yield return LoadPets();
+
             // обновление игры — один раз за запуск
             if (netState == NetState.Online && !updateChecked) yield return CheckUpdate(false);
 

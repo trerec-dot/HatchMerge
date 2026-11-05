@@ -247,9 +247,12 @@ public partial class MergeGame
 
         bool open = galIndex < zooCount;
         int v = open ? zooVar[galIndex] : 0;
-        galName.text = open ? Zoo[galIndex].name : "???";
+        string pet = open ? PetName(galIndex) : "";
+        galName.text = !open ? "???" : pet.Length > 0 ? pet : Zoo[galIndex].name;
         galInfo.text = !open ? "Ещё не открыт — вылупится из яйца уровня " + Zoo[galIndex].target
-                     : v > 0 ? "Редкая окраска: " + VariantName[v].ToLower() + "!" : "Открыт в твоём зоопарке";
+                     : v > 0 ? (pet.Length > 0 ? Zoo[galIndex].name + " · " : "") + "редкая окраска: " + VariantName[v].ToLower() + "!"
+                     : pet.Length > 0 ? Zoo[galIndex].name : "Открыт в твоём зоопарке";
+        RefreshGalleryPetBtn();
         galInfo.color = v > 0 ? C(190, 130, 20) : Muted;
         RefreshGalleryCare();
         galCount.text = (galIndex + 1) + " из " + Zoo.Length;

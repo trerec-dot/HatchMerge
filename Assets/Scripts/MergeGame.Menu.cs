@@ -96,6 +96,7 @@ public partial class MergeGame
         BuildAvatarPicker();
         BuildGallery();
         BuildCareUi();
+        BuildPets();
         BuildZooButtons();
         BuildAlbum();
         BuildDaily();
@@ -160,6 +161,7 @@ public partial class MergeGame
         galleryPanel.gameObject.SetActive(tab == TabGallery);
         rewardsPanel.gameObject.SetActive(tab == TabRewards);
         albumPanel.gameObject.SetActive(tab == TabAlbum);
+        petPanel.gameObject.SetActive(tab == TabPet);
 
         // в стартовом меню прячем нижнюю панель и счётчики сверху
         bool inMenu = tab == TabStart;
@@ -178,11 +180,12 @@ public partial class MergeGame
         if (tab == TabGallery) ShowGalleryCreature();
         if (tab == TabRewards) RefreshRewards();
         if (tab == TabAlbum) RefreshAlbum();
+        if (tab == TabPet) RefreshPet();
         if (tab == TabProfile) QuestAdd(QuestKind.Visit);
         for (int k = 0; k < NavTabs.Length; k++)
         {
             bool sel = NavTabs[k] == tab || (tab == TabProfile && NavTabs[k] == TabPlayers)
-                       || ((tab == TabGallery || tab == TabAlbum) && NavTabs[k] == 1);
+                       || ((tab == TabGallery || tab == TabAlbum || tab == TabPet) && NavTabs[k] == 1);
             tabImg[k].color = sel ? Ink : Color.white;
             tabTxt[k].color = sel ? Color.white : Ink;
         }
@@ -203,7 +206,9 @@ public partial class MergeGame
             {
                 var cr = MakeCreature(card, i, 50f, zooVar[i], IsSad(i));
                 cr.anchoredPosition = new Vector2(55f, -40f);
-                WrapLabel(card, Zoo[i].name, 11, zooVar[i] > 0 ? C(190, 130, 20) : Ink, TextAnchor.UpperCenter, 4, 78, 102, 32);
+                bool named = PetName(i).Length > 0;          // своё имя — розовым и крупнее
+                WrapLabel(card, ZooTitle(i), named ? 13 : 11, named ? C(200, 70, 120) : zooVar[i] > 0 ? C(190, 130, 20) : Ink,
+                    TextAnchor.UpperCenter, 4, 78, 102, 32);
                 if (CanFeed(i))            // голоден — монетка в углу (грустит — ещё и слёзы на мордочке)
                 {
                     var hb = TL(card, 82, 6, 22, 22, "Hungry");
